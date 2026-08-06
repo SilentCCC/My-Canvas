@@ -6,7 +6,7 @@
 
 1. &#x5B89;&#x88C5; Node.js 18 &#x6216;&#x66F4;&#x9AD8;&#x7248;&#x672C;&#x3002;
 2. &#x53CC;&#x51FB;&#x6839;&#x76EE;&#x5F55;&#x4E2D;&#x7684; start.bat&#x3002;
-3. &#x811A;&#x672C;&#x4F1A;&#x81EA;&#x52A8;&#x5B89;&#x88C5;&#x4F9D;&#x8D56;&#x3001;&#x6784;&#x5EFA;&#x7F51;&#x9875;&#x5E76;&#x6253;&#x5F00; http://localhost:3000&#x3002;
+3. &#x811A;&#x672C;&#x4F1A;&#x81EA;&#x52A8;&#x5B89;&#x88C5;&#x4F9D;&#x8D56;&#x3001;&#x6784;&#x5EFA;&#x7F51;&#x9875;&#x5E76;&#x6253;&#x5F00; http://localhost:6000&#x3002;
 
 &#x624B;&#x52A8;&#x542F;&#x52A8;&#xFF1A; npm install -&gt; npm run build -&gt; npm run server
 

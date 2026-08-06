@@ -36,9 +36,9 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [AI Canvas] Starting local server at http://localhost:3000
+echo [AI Canvas] Starting local server at http://localhost:6000
 start "AI Canvas Server" cmd /k "cd /d %~dp0 && npm run server"
 timeout /t 2 /nobreak >nul
-start "" http://localhost:3000
+start "" http://localhost:6000
 echo [AI Canvas] Browser opened. Close the server window to stop the app.
 endlocal

@@ -7,7 +7,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const configPath = path.join(__dirname, "config.json");
 const distPath = path.join(projectRoot, "web", "dist");
-const port = Number(process.env.PORT || 3000);
+const port = Number(process.env.PORT || 6000);
 const defaultOutputDir = path.join(projectRoot, "output");
 const legacyDefaultOutputDir = "E:\\Canvas\\output";
 
@@ -133,6 +133,11 @@ function getImageFromPayload(payload) {
   return null;
 }
 
+function providerResponseText(payload, fallback = "") {
+  if (!payload || typeof payload !== "object") return String(fallback || "").slice(0, 12000);
+  return JSON.stringify(payload, (key, value) => /^(b64_json|b64Json|base64)$/i.test(key) ? "[image data omitted]" : value, 2).slice(0, 12000);
+}
+
 function filenamePart(value) {
   return String(value || "ai-image").slice(0, 50).replace(/[^a-z0-9\u4e00-\u9fff]+/gi, "-").replace(/^-+|-+$/g, "") || "ai-image";
 }
@@ -250,7 +255,8 @@ app.post("/api/test", async (req, res) => {
 
 app.post("/api/generate", async (req, res) => {
   const state = await readConfig();
-  const config = activeProfile(state);
+  const requestedProfileId = String(req.body?.profileId || "");
+  const config = state.profiles.find((profile) => profile.id === requestedProfileId) || activeProfile(state);
   const prompt = String(req.body?.prompt || "").trim();
   const apiKey = String(config.apiKey || "").trim();
   if (!prompt) return res.status(400).json({ ok: false, error: "Prompt \u4e0d\u80fd\u4e3a\u7a7a\u3002" });
@@ -278,8 +284,11 @@ app.post("/api/generate", async (req, res) => {
         body: JSON.stringify({ model, prompt, size, quality })
       });
     }
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) return res.status(response.status).json({ ok: false, error: payload?.error?.message || `Image generation returned ${response.status}.` });
+    const bodyText = await response.text();
+    let payload = {};
+    try { payload = JSON.parse(bodyText); } catch { /* The provider may return a non-JSON error body. */ }
+    const responseText = providerResponseText(payload, bodyText);
+    if (!response.ok) return res.status(response.status).json({ ok: false, error: payload?.error?.message || `Image generation returned ${response.status}.`, responseText });
     const imageUrl = getImageFromPayload(payload);
     if (!imageUrl) return res.status(502).json({ ok: false, error: "\u670d\u52a1\u5546\u6ca1\u6709\u8fd4\u56de\u56fe\u7247 URL \u6216 base64 \u56fe\u7247\u3002" });
     let savedPath = "";
@@ -291,7 +300,7 @@ app.post("/api/generate", async (req, res) => {
         saveError = error.message || "Automatic save failed.";
       }
     }
-    res.json({ ok: true, imageUrl, revisedPrompt: payload?.data?.[0]?.revised_prompt || "", savedPath, saveError });
+    res.json({ ok: true, imageUrl, revisedPrompt: payload?.data?.[0]?.revised_prompt || "", savedPath, saveError, responseText });
   } catch (error) {
     res.status(502).json({ ok: false, error: error.message || "\u65e0\u6cd5\u8fde\u63a5\u56fe\u7247\u670d\u52a1\u5546\u3002" });
   }
