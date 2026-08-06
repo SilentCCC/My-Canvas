@@ -1,0 +1,16 @@
+{
+  "profiles": [
+    {
+      "id": "default",
+      "name": "默认配置",
+      "endpoint": "https://api.openai.com/v1",
+      "apiKey": "",
+      "model": "gpt-image-2",
+      "size": "1024x1024",
+      "quality": "high",
+      "autoSave": true,
+      "outputDir": "output"
+    }
+  ],
+  "activeProfileId": "default"
+}
