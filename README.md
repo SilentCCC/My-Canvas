@@ -1,27 +1,67 @@
 # AI Canvas
 
-&#x672C;&#x5730;&#x8FD0;&#x884C;&#x7684; AI &#x65E0;&#x9650;&#x753B;&#x5E03;&#x3002;&#x4F7F;&#x7528; React Flow &#x7BA1;&#x7406;&#x753B;&#x5E03;&#xFF0C;&#x901A;&#x8FC7;&#x672C;&#x5730; Node.js &#x4EE3;&#x7406;&#x8C03;&#x7528; OpenAI &#x517C;&#x5BB9;&#x56FE;&#x7247;&#x63A5;&#x53E3;&#x3002;
+本地运行的 AI 无限画布。通过 React Flow 管理 Prompt、图片、图片编组和生成结果，并通过本地 Node.js 服务调用 OpenAI 兼容的图片 API。
 
-## &#x542F;&#x52A8;
+## 当前进度
 
-1. &#x5B89;&#x88C5; Node.js 18 &#x6216;&#x66F4;&#x9AD8;&#x7248;&#x672C;&#x3002;
-2. &#x53CC;&#x51FB;&#x6839;&#x76EE;&#x5F55;&#x4E2D;&#x7684; start.bat&#x3002;
-3. &#x811A;&#x672C;&#x4F1A;&#x81EA;&#x52A8;&#x5B89;&#x88C5;&#x4F9D;&#x8D56;&#x3001;&#x6784;&#x5EFA;&#x7F51;&#x9875;&#x5E76;&#x6253;&#x5F00; http://localhost:6000&#x3002;
+- 无限画布支持平移、滚轮缩放、节点拖动、连线、删除和多画布管理。
+- Prompt 节点支持选择 API 配置档、模型、质量和联动尺寸。
+- 图片尺寸支持 `1K`、`2K`、`4K`，比例支持 `1:1`、`2:3`、`3:2`、`3:4`、`4:3`、`9:16`、`16:9`、`9:21`、`21:9`。
+- 支持文生图、图生图和最多 5 张参考图，可从电脑拖入图片。
+- 图片编组节点支持拖入多张图片、删除单张图片，并连接 Prompt 批量生成。
+- 生成后立即创建图片占位框，成功或失败状态会回填到对应节点。
+- 图片节点支持拖动、缩放、双击放大、打开、下载和删除。
+- 图片框右下角叹号可查看临时 URL、下载方式、文件大小、实际尺寸、模型、质量和第三方原始返回信息。
+- 顶部日志按钮显示每次生成的 Prompt、状态和原始响应文本；失败、超时、HTTP 错误和非 JSON 响应也会显示。
+- API Key 只保存在本地服务端配置中，输入框支持眼睛图标切换显示和隐藏。
 
-&#x624B;&#x52A8;&#x542F;&#x52A8;&#xFF1A; npm install -&gt; npm run build -&gt; npm run server
+## 启动
 
-## &#x5DF2;&#x5B9E;&#x73B0;
+环境要求：Node.js 18 或更高版本。
 
-- &#x65E0;&#x9650;&#x753B;&#x5E03;&#xFF1A;&#x5E73;&#x79FB;&#x3001;&#x7F29;&#x653E;&#x3001;&#x8282;&#x70B9;&#x62D6;&#x52A8;&#x3001;&#x5220;&#x9664;&#x548C;&#x8FDE;&#x7EBF;&#x3002;
-- Prompt &#x8282;&#x70B9;&#xFF1A;&#x7F16;&#x8F91; Prompt&#xFF0C;&#x76F4;&#x63A5;&#x8BBE;&#x7F6E;&#x6A21;&#x578B;&#x3001;&#x5C3A;&#x5BF8;&#x548C;&#x8D28;&#x91CF;&#x3002;
-- &#x56FE;&#x7247;&#x8282;&#x70B9;&#xFF1A;&#x81EA;&#x52A8;&#x653E;&#x5165;&#x753B;&#x5E03;&#x3001;&#x53EF;&#x62D6;&#x52A8;&#x3001;&#x7F29;&#x653E;&#x3001;&#x6253;&#x5F00;&#x548C;&#x4E0B;&#x8F7D;&#x3002;
-- API &#x8BBE;&#x7F6E;&#xFF1A;&#x652F;&#x6301;&#x591A;&#x4E2A;&#x914D;&#x7F6E;&#x6863;&#x3001;&#x5207;&#x6362;&#x3001;&#x65B0;&#x5EFA;&#x3001;&#x5220;&#x9664;&#x3001;&#x8FDE;&#x63A5;&#x6D4B;&#x8BD5;&#x3001;JSON &#x5BFC;&#x5165;&#x5BFC;&#x51FA;&#x3002;
-- &#x5386;&#x53F2;&#x8BB0;&#x5F55;&#xFF1A;&#x4FDD;&#x5B58;&#x6700;&#x8FD1; 50 &#x6B21;&#x751F;&#x6210;&#x7ED3;&#x679C;&#x3002;
+Windows 推荐双击根目录的 `start.bat`。手动启动：
 
-## &#x914D;&#x7F6E;&#x5B89;&#x5168;
+```bash
+npm.cmd install
+npm.cmd run build
+npm.cmd run server
+```
 
-API Key &#x53EA;&#x4FDD;&#x5B58;&#x5728; server/config.json&#xFF0C;&#x6D4F;&#x89C8;&#x5668;&#x53EA;&#x4F1A;&#x6536;&#x5230; hasApiKey &#x72B6;&#x6001;&#x3002;&#x5BFC;&#x51FA;&#x914D;&#x7F6E;&#x65F6;&#x4F1A;&#x5305;&#x542B; API Key&#xFF0C;&#x8BF7;&#x4E0D;&#x8981;&#x5206;&#x4EAB;&#x5BFC;&#x51FA;&#x6587;&#x4EF6;&#x3002;
+然后打开 <http://localhost:6000>。
 
-## &#x6269;&#x5C55;&#x4F4D;&#x7F6E;
+开发模式可以分别运行：
 
-&#x751F;&#x6210;&#x8BF7;&#x6C42;&#x7EDF;&#x4E00;&#x7ECF;&#x8FC7; /api/generate&#xFF0C;&#x540E;&#x7EED;&#x53EF;&#x5728; server/server.js &#x4E2D;&#x6269;&#x5C55; Flux&#x3001;Midjourney&#x3001;DALL-E&#x3001;&#x653E;&#x5927;&#x6A21;&#x578B;&#x548C; LoRA &#x9002;&#x914D;&#x5668;&#x3002;
+```bash
+npm.cmd run dev     # Vite 开发服务器，默认 5173
+npm.cmd run server  # API 服务，默认 6000
+```
+
+## API 配置
+
+在设置页选择或新建 API 配置档，填写 Endpoint、API Key、模型、尺寸和质量后保存。Endpoint 填写服务商的 API 根地址，例如：
+
+```text
+https://provider.example/v1
+```
+
+服务端会自动补充 `/images/generations` 或 `/images/edits`。真实配置保存在 `server/config.json`，该文件包含 API Key，已被 Git 忽略；换电脑后需要重新填写密钥。
+
+## 生成与调试
+
+服务端对图片生成请求设置 180 秒超时，并支持分块或 SSE 响应在读取到完整 JSON 后及时返回。第三方返回的图片 URL 会通过本地代理加载，远程图片也会在后台自动保存。
+
+如果画布没有获得图片，请先查看顶部“日志”，再悬停对应图片框右下角的叹号。原始响应文本可以帮助判断服务商返回格式、错误信息或缺失图片字段。
+
+## 重要文件
+
+- `web/src/App.jsx`：React 状态、画布、节点、设置页、日志和生成流程。
+- `web/src/config/imageSizes.js`：独立的图片尺寸配置，便于扩展其他模型。
+- `web/src/styles.css`：界面和节点样式。
+- `server/server.js`：Express API、第三方图片请求、超时、响应解析、图片代理和自动保存。
+- `server/config.example.json`：不含密钥的配置模板。
+- `CODEX_CONTEXT.md`：供 AI 开发助手阅读的项目上下文和开发记忆。
+- `package.json`：Node.js 脚本、依赖和运行环境要求。
+
+## 安全
+
+不要提交 `server/config.json`、API Key、`node_modules/`、`.npm-cache/`、`web/dist/` 或 `output/`。导出的配置 JSON 可能包含 API Key，请不要公开分享。

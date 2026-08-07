@@ -1,8 +1,12 @@
 {
   "name": "ai-canvas",
   "version": "0.1.0",
+  "description": "Local AI infinite canvas for image generation workflows",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "vite build --config web/vite.config.js",
     "dev": "vite --config web/vite.config.js",

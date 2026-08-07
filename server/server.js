@@ -10,6 +10,8 @@ const distPath = path.join(projectRoot, "web", "dist");
 const port = Number(process.env.PORT || 6000);
 const defaultOutputDir = path.join(projectRoot, "output");
 const legacyDefaultOutputDir = "E:\\Canvas\\output";
+const imageGenerationTimeoutMs = 180_000;
+const verifiedImageResponseOptions = { n: 1, response_format: "url", output_format: "png" };
 
 const defaultProfile = {
   id: "default",
@@ -17,6 +19,10 @@ const defaultProfile = {
   endpoint: "https://api.openai.com/v1",
   apiKey: "",
   model: "gpt-image-2",
+  resolution: "1K",
+  ratio: "1:1",
+  width: 1024,
+  height: 1024,
   size: "1024x1024",
   quality: "high",
   autoSave: true,
@@ -35,6 +41,92 @@ function generationUrl(endpoint) {
 function editsUrl(endpoint) {
   const normalized = cleanEndpoint(endpoint).replace(/\/images\/(generations|edits)$/i, "");
   return `${normalized}/images/edits`;
+}
+
+function extractCompleteJsonValues(text) {
+  const source = String(text || "");
+  const values = [];
+  for (let index = 0; index < source.length; index += 1) {
+    if (source[index] !== "{" && source[index] !== "[") continue;
+    const start = index;
+    let depth = 1;
+    let quote = false;
+    let escaped = false;
+    for (index += 1; index < source.length; index += 1) {
+      const character = source[index];
+      if (quote) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') quote = false;
+        continue;
+      }
+      if (character === '"') { quote = true; continue; }
+      if (character === "{" || character === "[") depth += 1;
+      if (character === "}" || character === "]") depth -= 1;
+      if (depth !== 0) continue;
+      const candidate = source.slice(start, index + 1);
+      try { JSON.parse(candidate); values.push(candidate); } catch { /* Ignore non-JSON text that contains braces. */ }
+      break;
+    }
+  }
+  return values;
+}
+
+function isTerminalProviderPayload(payload, depth = 0) {
+  if (!payload || typeof payload !== "object" || depth > 3) return false;
+  const terminalStates = new Set(["completed", "complete", "succeeded", "success", "done", "failed", "error", "cancelled", "canceled", "rejected", "expired"]);
+  for (const key of ["status", "state", "phase"]) {
+    if (terminalStates.has(String(payload[key] || "").trim().toLowerCase())) return true;
+  }
+  for (const key of ["data", "result", "output", "task"]) {
+    const value = payload[key];
+    if (Array.isArray(value) ? value.some((item) => isTerminalProviderPayload(item, depth + 1)) : isTerminalProviderPayload(value, depth + 1)) return true;
+  }
+  return false;
+}
+
+async function readImageGenerationBody(response) {
+  if (!response.body?.getReader) return response.text();
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let body = "";
+  let parsedValueCount = 0;
+  let latestCompleteJson = "";
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) return latestCompleteJson || body + decoder.decode();
+    body += decoder.decode(chunk.value, { stream: true });
+    const completeJsonValues = extractCompleteJsonValues(body);
+    for (const completeJson of completeJsonValues.slice(parsedValueCount)) {
+      latestCompleteJson = completeJson;
+      try {
+        const payload = JSON.parse(completeJson);
+        if (!getImageFromPayload(payload) && !isTerminalProviderPayload(payload)) continue;
+        await reader.cancel().catch(() => undefined);
+        return completeJson;
+      } catch { /* The candidate was already validated, but keep streaming if parsing unexpectedly fails. */ }
+    }
+    parsedValueCount = completeJsonValues.length;
+  }
+}
+
+async function fetchImageGeneration(input, init) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), imageGenerationTimeoutMs);
+  try {
+    const response = await fetch(input, { ...init, signal: controller.signal });
+    const bodyText = await readImageGenerationBody(response);
+    return { response, bodyText };
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error("图片生成超时（180 秒）。");
+      timeoutError.code = "IMAGE_GENERATION_TIMEOUT";
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function imageBlobFromInput(value) {
@@ -58,6 +150,10 @@ function sanitizeProfile(profile, index = 0) {
     endpoint: cleanEndpoint(source.endpoint || defaultProfile.endpoint),
     apiKey: typeof source.apiKey === "string" ? source.apiKey.trim() : "",
     model: String(source.model || defaultProfile.model).trim() || defaultProfile.model,
+    resolution: String(source.resolution || defaultProfile.resolution).trim() || defaultProfile.resolution,
+    ratio: String(source.ratio || defaultProfile.ratio).trim() || defaultProfile.ratio,
+    width: Number.isFinite(Number(source.width)) ? Number(source.width) : defaultProfile.width,
+    height: Number.isFinite(Number(source.height)) ? Number(source.height) : defaultProfile.height,
     size: String(source.size || defaultProfile.size).trim() || defaultProfile.size,
     quality: String(source.quality || defaultProfile.quality).trim() || defaultProfile.quality,
     autoSave: source.autoSave !== false,
@@ -104,6 +200,10 @@ function publicProfile(profile) {
     name: profile.name,
     endpoint: profile.endpoint,
     model: profile.model,
+    resolution: profile.resolution,
+    ratio: profile.ratio,
+    width: profile.width,
+    height: profile.height,
     size: profile.size,
     quality: profile.quality,
     autoSave: profile.autoSave,
@@ -122,15 +222,38 @@ function publicConfig(state) {
 }
 
 function getImageFromPayload(payload) {
-  const item = Array.isArray(payload?.data) ? payload.data[0] : payload?.data;
-  const candidate = item?.url || item?.image_url || item?.imageUrl;
-  if (candidate) return candidate;
-  const encoded = item?.b64_json || item?.b64Json || item?.base64;
-  if (encoded) return `data:image/png;base64,${encoded}`;
-  const alternative = payload?.images?.[0]?.url || payload?.images?.[0]?.b64_json;
-  if (alternative?.startsWith?.("data:")) return alternative;
-  if (alternative) return alternative.length > 100 ? `data:image/png;base64,${alternative}` : alternative;
-  return null;
+  const toImageSource = (value, encoded = false) => {
+    const candidate = String(value || "").trim();
+    if (!candidate) return null;
+    if (candidate.startsWith("data:") || /^https?:\/\//i.test(candidate)) return candidate;
+    return encoded || candidate.length > 100 ? `data:image/png;base64,${candidate}` : null;
+  };
+  const findImage = (value, depth = 0) => {
+    if (depth > 5 || value == null) return null;
+    if (typeof value === "string") return toImageSource(value);
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const image = findImage(item, depth + 1);
+        if (image) return image;
+      }
+      return null;
+    }
+    if (typeof value !== "object") return null;
+    for (const key of ["url", "image_url", "imageUrl", "download_url", "downloadUrl"]) {
+      const image = toImageSource(value[key]);
+      if (image) return image;
+    }
+    for (const key of ["b64_json", "b64Json", "base64", "image_base64", "imageBase64"]) {
+      const image = toImageSource(value[key], true);
+      if (image) return image;
+    }
+    for (const key of ["data", "images", "image", "result", "results", "output", "outputs"]) {
+      const image = findImage(value[key], depth + 1);
+      if (image) return image;
+    }
+    return null;
+  };
+  return findImage(payload);
 }
 
 function providerResponseText(payload, fallback = "") {
@@ -161,7 +284,7 @@ async function saveImageToDisk(imageUrl, prompt, outputDir) {
   const filename = `${Date.now()}-${filenamePart(prompt)}.${extension}`;
   const filePath = path.join(outputDir, filename);
   await fs.writeFile(filePath, buffer);
-  return filePath;
+  return { filePath, fileSize: buffer.length };
 }
 
 const app = express();
@@ -186,6 +309,10 @@ app.post("/api/config", async (req, res) => {
     name: body.name ?? current.name,
     endpoint: body.endpoint ?? current.endpoint,
     model: body.model ?? current.model,
+    resolution: body.resolution ?? current.resolution,
+    ratio: body.ratio ?? current.ratio,
+    width: body.width ?? current.width,
+    height: body.height ?? current.height,
     size: body.size ?? current.size,
     quality: body.quality ?? current.quality,
     autoSave: body.autoSave ?? current.autoSave,
@@ -267,6 +394,7 @@ app.post("/api/generate", async (req, res) => {
   const referenceImages = (Array.isArray(req.body?.referenceImages) ? req.body.referenceImages : [req.body?.referenceImage]).map((value) => String(value || "").trim()).filter(Boolean).slice(0, 5);
   try {
     let response;
+    let bodyText;
     if (referenceImages.length) {
       const form = new FormData();
       form.append("model", model);
@@ -276,33 +404,41 @@ app.post("/api/generate", async (req, res) => {
       for (const [index, referenceImage] of referenceImages.entries()) {
         form.append("image", await imageBlobFromInput(referenceImage), `reference-${index + 1}.png`);
       }
-      response = await fetch(editsUrl(config.endpoint), { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form });
+      ({ response, bodyText } = await fetchImageGeneration(editsUrl(config.endpoint), { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form }));
     } else {
-      response = await fetch(generationUrl(config.endpoint), {
+      ({ response, bodyText } = await fetchImageGeneration(generationUrl(config.endpoint), {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt, size, quality })
-      });
+        body: JSON.stringify({ model, prompt, size, quality, ...verifiedImageResponseOptions })
+      }));
     }
-    const bodyText = await response.text();
     let payload = {};
     try { payload = JSON.parse(bodyText); } catch { /* The provider may return a non-JSON error body. */ }
     const responseText = providerResponseText(payload, bodyText);
-    if (!response.ok) return res.status(response.status).json({ ok: false, error: payload?.error?.message || `Image generation returned ${response.status}.`, responseText });
+    const rawResponseText = String(bodyText || "").slice(0, 100000);
+    if (!response.ok) return res.status(response.status).json({ ok: false, error: payload?.error?.message || `Image generation returned ${response.status}.`, responseText, rawResponseText });
     const imageUrl = getImageFromPayload(payload);
-    if (!imageUrl) return res.status(502).json({ ok: false, error: "\u670d\u52a1\u5546\u6ca1\u6709\u8fd4\u56de\u56fe\u7247 URL \u6216 base64 \u56fe\u7247\u3002" });
+    if (!imageUrl) return res.status(502).json({ ok: false, error: "\u670d\u52a1\u5546\u6ca1\u6709\u8fd4\u56de\u56fe\u7247 URL \u6216 base64 \u56fe\u7247\u3002", responseText, rawResponseText });
     let savedPath = "";
+    let fileSize = 0;
     let saveError = "";
-    if (config.autoSave) {
+    if (config.autoSave && imageUrl.startsWith("data:")) {
       try {
-        savedPath = await saveImageToDisk(imageUrl, prompt, config.outputDir);
+        const savedImage = await saveImageToDisk(imageUrl, prompt, config.outputDir);
+        savedPath = savedImage.filePath;
+        fileSize = savedImage.fileSize;
       } catch (error) {
         saveError = error.message || "Automatic save failed.";
       }
     }
-    res.json({ ok: true, imageUrl, revisedPrompt: payload?.data?.[0]?.revised_prompt || "", savedPath, saveError, responseText });
+    res.json({ ok: true, imageUrl, revisedPrompt: payload?.data?.[0]?.revised_prompt || "", savedPath, fileSize, saveError, responseText, rawResponseText });
+    if (config.autoSave && !imageUrl.startsWith("data:")) {
+      void saveImageToDisk(imageUrl, prompt, config.outputDir).catch((error) => console.warn("[AI Canvas] Automatic image save failed:", error.message || error));
+    }
   } catch (error) {
-    res.status(502).json({ ok: false, error: error.message || "\u65e0\u6cd5\u8fde\u63a5\u56fe\u7247\u670d\u52a1\u5546\u3002" });
+    if (error?.code === "IMAGE_GENERATION_TIMEOUT") return res.status(504).json({ ok: false, error: error.message, responseText: error.message, rawResponseText: "" });
+    const errorMessage = error.message || "\u65e0\u6cd5\u8fde\u63a5\u56fe\u7247\u670d\u52a1\u5546\u3002";
+    res.status(502).json({ ok: false, error: errorMessage, responseText: errorMessage, rawResponseText: "" });
   }
 });
 
