@@ -40,6 +40,8 @@ npm.cmd run server  # API 服务，默认 6000
 
 在设置页选择或新建 API 配置档，填写 Endpoint、API Key、模型、尺寸和质量后保存。Endpoint 填写服务商的 API 根地址，例如：
 
+每个 API 配置档还可以选择响应格式：`URL` 或 `Base64`，默认使用 `URL`。该选择同时应用于文生图和图生图请求。
+
 ```text
 https://provider.example/v1
 ```

@@ -1,4 +1,9 @@
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
+export const SUPPORTED_IMAGE_MODELS = [
+  DEFAULT_IMAGE_MODEL,
+  "grok-imagine-image",
+  "grok-imagine-image-quality"
+];
 
 export const IMAGE_SIZE_CONFIG = {
   [DEFAULT_IMAGE_MODEL]: {

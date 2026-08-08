@@ -28,7 +28,7 @@
 
 - 当前版本号：
   - `package.json`：`0.1.0`
-  - 开发上下文版本：`0.1.0-dev.2026-08-08.17`
+  - 开发上下文版本：`0.1.0-dev.2026-08-08.22`
 
 ### 已完成的功能
 
@@ -610,4 +610,79 @@ fix: allow copying image response details
 - 建议提交信息：
 ```text
 docs: record third-party image API compatibility findings
+```
+
+### 2026-08-08（图生图接口接入）
+
+- 上下文版本：`0.1.0-dev.2026-08-08.19`
+- 修改内容：完成第三方 image2 图生图请求格式对齐。
+- 涉及文件：
+  - `server/server.js`
+  - `web/src/App.jsx`
+  - `CODEX_CONTEXT.md`
+- 已完成：
+  - Prompt 有参考图时继续调用 `POST /v1/images/edits` 并以 `multipart/form-data` 提交图片。
+  - 图生图请求增加 `response_format: "b64_json"`，与第三方文档示例一致。
+  - 服务端既有的 `data[0].b64_json` 解析会将结果转换为画布可显示和保存的 data URL。
+  - Prompt 存在直接参考图时，生成按钮显示“图生图”；没有参考图时显示“文生图”。
+- 已知限制：第三方文档只展示单图 `image` 字段；画布仍按既有需求允许提交最多 5 张同名 `image`，需要使用真实 API 手工确认多图行为。
+- 建议提交信息：
+```text
+feat: enable documented image-to-image generation
+```
+### 2026-08-08（响应格式设置）
+
+- 上下文版本：`0.1.0-dev.2026-08-08.20`
+- 修改内容：在 API 设置中增加响应格式选择。
+- 涉及文件：
+  - `server/server.js`
+  - `web/src/App.jsx`
+  - `server/config.example.json`
+  - `CODEX_CONTEXT.md`
+- 已完成：
+  - 支持 `url` 和 `b64_json` 两种响应格式。
+  - 默认响应格式为 `url`，兼容现有画布和技能验证过的请求。
+  - 当前 API 配置档独立保存所选响应格式。
+  - 文生图和图生图请求都会读取该设置；URL 模式额外发送 `output_format: "png"`。
+- 建议提交信息：
+```text
+feat: make image response format configurable
+```
+
+### 2026-08-08（等待期间画布错误隔离）
+
+- 上下文版本：`0.1.0-dev.2026-08-08.21`
+- 修改内容：隔离图片节点和 React Flow 画布的运行时渲染错误，避免等待生图时整页进入“画布需要重新加载”状态。
+- 涉及文件：
+  - `web/src/App.jsx`
+  - `web/src/styles.css`
+  - `CODEX_CONTEXT.md`
+- 解决的问题：
+  - 图片节点渲染异常时不再冒泡到根错误边界并卸载整个应用。
+  - React Flow 视图异常时只显示局部恢复入口，父级生成请求和状态继续保留。
+  - 图片结果或错误状态变化后，局部错误边界会自动尝试恢复渲染。
+- 测试结果：`npm.cmd run build`、`/api/health` 均通过；尚未用真实长时间第三方请求复现验证。
+- 建议提交信息：
+```text
+fix: isolate canvas render errors during image generation
+```
+
+### 2026-08-08（生成按钮锁定与结果节点排序）
+
+- 上下文版本：`0.1.0-dev.2026-08-08.22`
+- 修改内容：防止同一个 Prompt 在生成期间重复提交，让同一个 Prompt 的多批生成图片按顺序向下排列，并补齐 URL 图片的文件大小读取。
+- 涉及文件：
+  - `web/src/App.jsx`
+  - `CODEX_CONTEXT.md`
+- 解决的问题：
+  - 增加基于 `useRef` 的生成请求锁，处理 React 状态更新前的快速重复点击。
+  - 生成按钮在 `generating` 状态下保持禁用，任务结束或失败后自动释放锁。
+  - 结果节点记录来源 Prompt，下一批节点从已有结果的底部继续布局，避免窗口重叠。
+  - 远程图片通过本地代理读取 `blob.size`，回写图片节点后在信息卡中显示文件大小。
+- 下一步计划：进行真实第三方 API 的重复生成测试，确认按钮锁和纵向排列在图生图编组场景下也符合预期。
+
+建议提交信息：
+
+```text
+fix: lock duplicate image generation and stack result nodes
 ```

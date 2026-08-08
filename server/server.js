@@ -11,7 +11,7 @@ const port = Number(process.env.PORT || 6000);
 const defaultOutputDir = path.join(projectRoot, "output");
 const legacyDefaultOutputDir = "E:\\Canvas\\output";
 const imageGenerationTimeoutMs = 180_000;
-const verifiedImageResponseOptions = { n: 1, response_format: "url", output_format: "png" };
+const verifiedImageResponseOptions = { n: 1 };
 
 const defaultProfile = {
   id: "default",
@@ -25,6 +25,7 @@ const defaultProfile = {
   height: 1024,
   size: "1024x1024",
   quality: "high",
+  responseFormat: "b64_json",
   autoSave: true,
   outputDir: defaultOutputDir
 };
@@ -41,6 +42,16 @@ function generationUrl(endpoint) {
 function editsUrl(endpoint) {
   const normalized = cleanEndpoint(endpoint).replace(/\/images\/(generations|edits)$/i, "");
   return `${normalized}/images/edits`;
+}
+
+function modelsUrl(endpoint) {
+  const normalized = cleanEndpoint(endpoint).replace(/\/images\/(generations|edits)$/i, "").replace(/\/models$/i, "");
+  return `${normalized}/models`;
+}
+
+function modelIdsFromPayload(payload) {
+  const entries = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.models) ? payload.models : Array.isArray(payload) ? payload : [];
+  return [...new Set(entries.map((entry) => typeof entry === "string" ? entry : entry?.id || entry?.name || entry?.model).map((model) => String(model || "").trim()).filter(Boolean))];
 }
 
 function extractCompleteJsonValues(text) {
@@ -156,6 +167,7 @@ function sanitizeProfile(profile, index = 0) {
     height: Number.isFinite(Number(source.height)) ? Number(source.height) : defaultProfile.height,
     size: String(source.size || defaultProfile.size).trim() || defaultProfile.size,
     quality: String(source.quality || defaultProfile.quality).trim() || defaultProfile.quality,
+    responseFormat: source.responseFormat === "url" ? "url" : "b64_json",
     autoSave: source.autoSave !== false,
     outputDir: requestedOutputDir && requestedOutputDir !== legacyDefaultOutputDir ? requestedOutputDir : defaultProfile.outputDir
   };
@@ -206,6 +218,7 @@ function publicProfile(profile) {
     height: profile.height,
     size: profile.size,
     quality: profile.quality,
+    responseFormat: profile.responseFormat,
     autoSave: profile.autoSave,
     outputDir: profile.outputDir,
     hasApiKey: Boolean(profile.apiKey)
@@ -257,15 +270,19 @@ function getImageFromPayload(payload) {
 }
 
 function providerResponseText(payload, fallback = "") {
-  if (!payload || typeof payload !== "object") return String(fallback || "").slice(0, 12000);
-  return JSON.stringify(payload, (key, value) => /^(b64_json|b64Json|base64)$/i.test(key) ? "[image data omitted]" : value, 2).slice(0, 12000);
+  if (!payload || typeof payload !== "object") return String(fallback || "");
+  return JSON.stringify(payload, (key, value) => {
+    if (/^(b64_json|b64Json|base64)$/i.test(key)) return "[image data omitted]";
+    if (typeof value === "string" && /^data:image\//i.test(value) && value.length > 512) return "[image data omitted]";
+    return value;
+  }, 2);
 }
 
 function filenamePart(value) {
   return String(value || "ai-image").slice(0, 50).replace(/[^a-z0-9\u4e00-\u9fff]+/gi, "-").replace(/^-+|-+$/g, "") || "ai-image";
 }
 
-async function saveImageToDisk(imageUrl, prompt, outputDir) {
+async function saveImageToDisk(imageUrl, model, outputDir) {
   await fs.mkdir(outputDir, { recursive: true });
   let buffer;
   let extension = "png";
@@ -281,7 +298,9 @@ async function saveImageToDisk(imageUrl, prompt, outputDir) {
     extension = contentType.split("/")[1]?.split(";")[0] || "png";
     buffer = Buffer.from(await response.arrayBuffer());
   }
-  const filename = `${Date.now()}-${filenamePart(prompt)}.${extension}`;
+  const now = new Date();
+  const timestamp = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("") + "-" + [String(now.getHours()).padStart(2, "0"), String(now.getMinutes()).padStart(2, "0"), String(now.getSeconds()).padStart(2, "0"), String(now.getMilliseconds()).padStart(3, "0")].join("");
+  const filename = `${timestamp}-${filenamePart(model)}.${extension}`;
   const filePath = path.join(outputDir, filename);
   await fs.writeFile(filePath, buffer);
   return { filePath, fileSize: buffer.length };
@@ -296,6 +315,16 @@ app.get("/api/health", (_req, res) => {
 
 app.get("/api/config", async (_req, res) => {
   res.json(publicConfig(await readConfig()));
+});
+
+app.get("/api/config/key", async (req, res) => {
+  const remoteAddress = String(req.socket.remoteAddress || "");
+  if (!new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]).has(remoteAddress)) return res.status(403).json({ ok: false, error: "API Key can only be viewed locally." });
+  const state = await readConfig();
+  const profileId = String(req.query.profileId || state.activeProfileId);
+  const profile = state.profiles.find((item) => item.id === profileId);
+  if (!profile) return res.status(404).json({ ok: false, error: "Configuration profile not found." });
+  res.json({ ok: true, apiKey: profile.apiKey });
 });
 
 app.post("/api/config", async (req, res) => {
@@ -315,6 +344,7 @@ app.post("/api/config", async (req, res) => {
     height: body.height ?? current.height,
     size: body.size ?? current.size,
     quality: body.quality ?? current.quality,
+    responseFormat: body.responseFormat ?? current.responseFormat,
     autoSave: body.autoSave ?? current.autoSave,
     outputDir: body.outputDir ?? current.outputDir,
     apiKey: typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey : current.apiKey
@@ -369,14 +399,32 @@ app.post("/api/test", async (req, res) => {
   const apiKey = String(req.body?.apiKey || active.apiKey || "").trim();
   if (!endpoint) return res.status(400).json({ ok: false, error: "\u8bf7\u5148\u586b\u5199 Endpoint \u5730\u5740\u3002" });
   if (!apiKey) return res.status(400).json({ ok: false, error: "\u5c1a\u672a\u914d\u7f6e API Key\u3002" });
-  const modelsUrl = endpoint.endsWith("/models") ? endpoint : `${endpoint}/models`;
   try {
-    const response = await fetch(modelsUrl, { headers: { Authorization: `Bearer ${apiKey}` } });
+    const response = await fetch(modelsUrl(endpoint), { headers: { Authorization: `Bearer ${apiKey}` } });
     const bodyText = await response.text();
     if (!response.ok) return res.status(response.status).json({ ok: false, error: `\u8fde\u63a5\u8fd4\u56de\u72b6\u6001\u7801 ${response.status}\u3002`, detail: bodyText.slice(0, 300) });
     res.json({ ok: true, message: "\u8fde\u63a5\u6210\u529f\u3002" });
   } catch (error) {
     res.status(502).json({ ok: false, error: error.message || "\u65e0\u6cd5\u8fde\u63a5 Endpoint\u3002" });
+  }
+});
+
+app.post("/api/models", async (req, res) => {
+  const state = await readConfig();
+  const active = activeProfile(state);
+  const endpoint = cleanEndpoint(req.body?.endpoint ?? active.endpoint);
+  const apiKey = String(req.body?.apiKey || active.apiKey || "").trim();
+  if (!endpoint) return res.status(400).json({ ok: false, error: "\u8bf7\u5148\u586b\u5199 Endpoint \u5730\u5740\u3002" });
+  if (!apiKey) return res.status(400).json({ ok: false, error: "\u5c1a\u672a\u914d\u7f6e API Key\u3002" });
+  try {
+    const response = await fetch(modelsUrl(endpoint), { headers: { Authorization: `Bearer ${apiKey}` } });
+    const bodyText = await response.text();
+    let payload = {};
+    try { payload = JSON.parse(bodyText); } catch { /* Some providers return a non-JSON error body. */ }
+    if (!response.ok) return res.status(response.status).json({ ok: false, error: `\u83b7\u53d6\u6a21\u578b\u5931\u8d25\uff0c\u72b6\u6001\u7801 ${response.status}\u3002`, detail: providerResponseText(payload, bodyText) });
+    res.json({ ok: true, models: modelIdsFromPayload(payload) });
+  } catch (error) {
+    res.status(502).json({ ok: false, error: error.message || "\u65e0\u6cd5\u83b7\u53d6\u6a21\u578b\u5217\u8868\u3002" });
   }
 });
 
@@ -391,6 +439,7 @@ app.post("/api/generate", async (req, res) => {
   const model = String(req.body?.model || config.model || defaultProfile.model).trim();
   const size = String(req.body?.size || config.size || defaultProfile.size).trim();
   const quality = String(req.body?.quality || config.quality || defaultProfile.quality).trim();
+  const responseFormat = config.responseFormat === "url" ? "url" : "b64_json";
   const referenceImages = (Array.isArray(req.body?.referenceImages) ? req.body.referenceImages : [req.body?.referenceImage]).map((value) => String(value || "").trim()).filter(Boolean).slice(0, 5);
   try {
     let response;
@@ -401,6 +450,7 @@ app.post("/api/generate", async (req, res) => {
       form.append("prompt", prompt);
       form.append("size", size);
       form.append("quality", quality);
+      form.append("response_format", responseFormat);
       for (const [index, referenceImage] of referenceImages.entries()) {
         form.append("image", await imageBlobFromInput(referenceImage), `reference-${index + 1}.png`);
       }
@@ -409,13 +459,13 @@ app.post("/api/generate", async (req, res) => {
       ({ response, bodyText } = await fetchImageGeneration(generationUrl(config.endpoint), {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt, size, quality, ...verifiedImageResponseOptions })
+        body: JSON.stringify({ model, prompt, size, quality, ...verifiedImageResponseOptions, response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) })
       }));
     }
     let payload = {};
     try { payload = JSON.parse(bodyText); } catch { /* The provider may return a non-JSON error body. */ }
     const responseText = providerResponseText(payload, bodyText);
-    const rawResponseText = String(bodyText || "").slice(0, 100000);
+    const rawResponseText = responseText;
     if (!response.ok) return res.status(response.status).json({ ok: false, error: payload?.error?.message || `Image generation returned ${response.status}.`, responseText, rawResponseText });
     const imageUrl = getImageFromPayload(payload);
     if (!imageUrl) return res.status(502).json({ ok: false, error: "\u670d\u52a1\u5546\u6ca1\u6709\u8fd4\u56de\u56fe\u7247 URL \u6216 base64 \u56fe\u7247\u3002", responseText, rawResponseText });
@@ -424,7 +474,7 @@ app.post("/api/generate", async (req, res) => {
     let saveError = "";
     if (config.autoSave && imageUrl.startsWith("data:")) {
       try {
-        const savedImage = await saveImageToDisk(imageUrl, prompt, config.outputDir);
+        const savedImage = await saveImageToDisk(imageUrl, model, config.outputDir);
         savedPath = savedImage.filePath;
         fileSize = savedImage.fileSize;
       } catch (error) {
@@ -433,7 +483,7 @@ app.post("/api/generate", async (req, res) => {
     }
     res.json({ ok: true, imageUrl, revisedPrompt: payload?.data?.[0]?.revised_prompt || "", savedPath, fileSize, saveError, responseText, rawResponseText });
     if (config.autoSave && !imageUrl.startsWith("data:")) {
-      void saveImageToDisk(imageUrl, prompt, config.outputDir).catch((error) => console.warn("[AI Canvas] Automatic image save failed:", error.message || error));
+      void saveImageToDisk(imageUrl, model, config.outputDir).catch((error) => console.warn("[AI Canvas] Automatic image save failed:", error.message || error));
     }
   } catch (error) {
     if (error?.code === "IMAGE_GENERATION_TIMEOUT") return res.status(504).json({ ok: false, error: error.message, responseText: error.message, rawResponseText: "" });
