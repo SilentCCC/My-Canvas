@@ -161,6 +161,7 @@ const cn = {
   invalidConfig: "\u914d\u7f6e\u6587\u4ef6\u683c\u5f0f\u65e0\u6548\u3002",
   dismiss: "\u5173\u95ed\u63d0\u793a",
   generationFailed: "\u751f\u6210\u5931\u8d25\u3002",
+  modelRequired: "\u8bf7\u5148\u5728 API \u8bbe\u7f6e\u4e2d\u9ad8\u4eae\u81f3\u5c11\u4e00\u4e2a\u6a21\u578b\u3002",
   generationTimeout: "\u56fe\u7247\u751f\u6210\u8d85\u65f6\uff08180 \u79d2\uff09\u3002",
   nodeModel: "\u8282\u70b9\u6a21\u578b",
   nodeProfile: "\u8282\u70b9 API \u914d\u7f6e",
@@ -217,10 +218,21 @@ const initialNodes = [
 
 const CANVASES_KEY = "ai-canvas-workspaces-v1";
 const FETCHED_MODELS_KEY = "ai-canvas-fetched-models-v1";
+const SELECTED_MODELS_KEY = "ai-canvas-selected-models-v1";
 
 function loadFetchedModelsByProfile() {
   try {
     const saved = JSON.parse(localStorage.getItem(FETCHED_MODELS_KEY) || "{}");
+    if (!saved || typeof saved !== "object" || Array.isArray(saved)) return {};
+    return Object.fromEntries(Object.entries(saved).map(([profileId, models]) => [profileId, Array.isArray(models) ? [...new Set(models.map((model) => String(model || "").trim()).filter(Boolean))] : []]));
+  } catch {
+    return {};
+  }
+}
+
+function loadSelectedModelsByProfile() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SELECTED_MODELS_KEY) || "{}");
     if (!saved || typeof saved !== "object" || Array.isArray(saved)) return {};
     return Object.fromEntries(Object.entries(saved).map(([profileId, models]) => [profileId, Array.isArray(models) ? [...new Set(models.map((model) => String(model || "").trim()).filter(Boolean))] : []]));
   } catch {
@@ -260,6 +272,18 @@ function loadCanvasState() {
     // Ignore malformed local workspace data and start with a clean canvas.
   }
   return { activeId: "canvas-1", canvases: [{ id: "canvas-1", name: "\u672a\u547d\u540d\u753b\u5e03", nodes: initialNodes, edges: [] }] };
+}
+
+function persistHistorySafely(items) {
+  for (let length = items.length; length >= 0; length -= 1) {
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, length)));
+      return;
+    } catch {
+      // Base64 images can exceed the browser quota; retry with fewer old entries.
+    }
+  }
+  try { localStorage.removeItem(HISTORY_KEY); } catch { /* Ignore storage failures. */ }
 }
 
 function formatDate(value) {
@@ -317,8 +341,10 @@ function PromptNode({ id, data, selected }) {
   const [isReferenceDragOver, setIsReferenceDragOver] = useState(false);
   const referenceImages = Array.isArray(data.referenceImages) ? data.referenceImages : (data.referenceImage ? [data.referenceImage] : []);
   const isImageToImage = referenceImages.length > 0;
-  const sizeSelection = normalizeImageSizeSelection(data);
-  const sizeOptions = getImageSizeOptions(data.model);
+  const modelOptions = Array.isArray(data.modelOptions) ? data.modelOptions : [data.model || DEFAULT_IMAGE_MODEL];
+  const activeModel = modelOptions.includes(data.model) ? data.model : (modelOptions[0] || "");
+  const sizeSelection = normalizeImageSizeSelection({ ...data, model: activeModel || DEFAULT_IMAGE_MODEL });
+  const sizeOptions = getImageSizeOptions(activeModel || DEFAULT_IMAGE_MODEL);
 
   useEffect(() => {
     if (isGenerating && !data.generationStartedAt) data.onResetGeneration?.(id);
@@ -360,15 +386,15 @@ function PromptNode({ id, data, selected }) {
           <select className="node-select node-profile nodrag" value={data.profileId || data.activeProfileId || data.profiles?.[0]?.id || ""} onChange={(event) => data.onParamChange?.(id, "profileId", event.target.value)} aria-label={cn.nodeProfile} title={cn.nodeProfile}>
             {(data.profiles || []).map((profile, index) => <option value={profile.id} key={profile.id}>{profile.name || `API ${index + 1}`}</option>)}
           </select>
-          <select className="node-select node-model nodrag" value={data.model || DEFAULT_IMAGE_MODEL} onChange={(event) => data.onParamChange?.(id, "model", event.target.value)} aria-label={cn.nodeModel}>
-            {(data.modelOptions?.length ? data.modelOptions : [data.model || DEFAULT_IMAGE_MODEL]).map((model) => <option key={model} value={model}>{model}</option>)}
+          <select className="node-select node-model nodrag" value={activeModel} onChange={(event) => data.onParamChange?.(id, "model", event.target.value)} aria-label={cn.nodeModel} disabled={!modelOptions.length}>
+            {modelOptions.length ? modelOptions.map((model) => <option key={model} value={model}>{model}</option>) : <option value="">未选择模型</option>}
           </select>
           <div className="node-size-controls">
-            <select className="node-select nodrag" value={sizeSelection.resolution} onChange={(event) => data.onSizeChange?.(id, getImageSizeSelection({ model: data.model, resolution: event.target.value, ratio: sizeSelection.ratio }))} aria-label="分辨率等级">
+            <select className="node-select nodrag" value={sizeSelection.resolution} onChange={(event) => data.onSizeChange?.(id, getImageSizeSelection({ model: activeModel || DEFAULT_IMAGE_MODEL, resolution: event.target.value, ratio: sizeSelection.ratio }))} aria-label="分辨率等级">
               {sizeOptions.resolutions.map((resolution) => <option key={resolution} value={resolution}>{resolution}</option>)}
             </select>
-            <select className="node-select nodrag" value={sizeSelection.ratio} onChange={(event) => data.onSizeChange?.(id, getImageSizeSelection({ model: data.model, resolution: sizeSelection.resolution, ratio: event.target.value }))} aria-label={cn.nodeSize}>
-              {sizeOptions.ratios.map((ratio) => <option key={ratio} value={ratio}>{formatImageRatioOption(getImageSizeSelection({ model: data.model, resolution: sizeSelection.resolution, ratio }))}</option>)}
+            <select className="node-select nodrag" value={sizeSelection.ratio} onChange={(event) => data.onSizeChange?.(id, getImageSizeSelection({ model: activeModel || DEFAULT_IMAGE_MODEL, resolution: sizeSelection.resolution, ratio: event.target.value }))} aria-label={cn.nodeSize}>
+              {sizeOptions.ratios.map((ratio) => <option key={ratio} value={ratio}>{formatImageRatioOption(getImageSizeSelection({ model: activeModel || DEFAULT_IMAGE_MODEL, resolution: sizeSelection.resolution, ratio }))}</option>)}
             </select>
           </div>
           <select className="node-select nodrag" value={data.quality || "high"} onChange={(event) => data.onParamChange?.(id, "quality", event.target.value)} aria-label={cn.nodeQuality}>
@@ -380,7 +406,7 @@ function PromptNode({ id, data, selected }) {
         </div>
         <div className="prompt-footer">
           <span className="prompt-hint">{(data.prompt || "").length}/4000</span>
-          <button className="generate-button nodrag" onClick={() => data.onGenerate?.(id)} disabled={isGenerating || !(data.prompt || "").trim()}>
+          <button className="generate-button nodrag" onClick={() => data.onGenerate?.(id)} disabled={!activeModel || !(data.prompt || "").trim()}>
             {isGenerating ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
             <span>{isGenerating ? cn.generating : (isImageToImage ? cn.imageToImage : cn.textToImage)}</span>
           </button>
@@ -444,11 +470,11 @@ function ImageNode({ id, data, selected }) {
   const requestPrompt = String(data.prompt || "").trim() || cn.infoUnavailable;
   const handleImageDoubleClick = (event) => {
     event.stopPropagation();
-    if (data.src) data.onPreview?.(data.src, data.title);
+    if (data.src) data.onPreview?.(data.src, data.title, data.comparisonSource);
   };
 
   return (
-    <div className={`canvas-node image-node ${selected ? "is-selected" : ""}`} onClick={(event) => { if (!event.target.closest("button")) data.onShowPrompt?.(id); }} onDoubleClick={(event) => { if (data.src && !event.target.closest("button")) data.onPreview?.(data.src, data.title); }}>
+    <div className={`canvas-node image-node ${selected ? "is-selected" : ""}`} onClick={(event) => { if (!event.target.closest("button")) data.onShowPrompt?.(id); }} onDoubleClick={(event) => { if (data.src && !event.target.closest("button")) data.onPreview?.(data.src, data.title, data.comparisonSource); }}>
       <NodeResizer isVisible={selected} minWidth={260} minHeight={290} lineClassName="resizer-line" handleClassName="resizer-handle" />
       <Handle type="target" position={Position.Left} className="node-handle" />
       <div className="node-header">
@@ -530,32 +556,24 @@ function ResilientImageNode(props) {
 class CanvasErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, retryKey: 0, retryCount: 0 };
+    this.state = { hasError: false, errorMessage: "", retryKey: 0 };
   }
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error) {
+    return { hasError: true, errorMessage: error?.message || String(error || "未知画布错误") };
   }
 
-  componentDidCatch() {
-    const retryCount = this.state.retryCount + 1;
-    if (retryCount > 3) return;
-    this.retryTimer = window.setTimeout(() => {
-      this.retryTimer = null;
-      this.setState((current) => ({ hasError: false, retryKey: current.retryKey + 1, retryCount }));
-    }, 120);
-  }
-
-  componentWillUnmount() {
-    if (this.retryTimer) window.clearTimeout(this.retryTimer);
+  componentDidCatch(error, errorInfo) {
+    const details = [error?.message, errorInfo?.componentStack].filter(Boolean).join("\n\n");
+    if (details) this.setState({ errorMessage: details });
   }
 
   componentDidUpdate(previousProps) {
-    if (previousProps.resetKey !== this.props.resetKey && (this.state.hasError || this.state.retryCount)) this.setState((current) => ({ hasError: false, retryKey: current.retryKey + 1, retryCount: 0 }));
+    if (previousProps.resetKey !== this.props.resetKey && this.state.hasError) this.setState((current) => ({ hasError: false, errorMessage: "", retryKey: current.retryKey + 1 }));
   }
 
   render() {
-    if (this.state.hasError) return <div className="canvas-render-error"><AlertCircle size={20} /><span>画布正在恢复，生成任务不会中断。</span><button className="toolbar-button" onClick={() => this.setState((current) => ({ hasError: false, retryKey: current.retryKey + 1, retryCount: 0 }))}><RefreshCw size={15} /><span>恢复画布</span></button></div>;
+    if (this.state.hasError) return <div className="canvas-render-error"><AlertCircle size={20} /><div><strong>画布需要重新加载</strong><pre className="canvas-error-detail">{this.state.errorMessage || "未知画布错误"}</pre></div><button className="toolbar-button" onClick={() => this.setState((current) => ({ hasError: false, errorMessage: "", retryKey: current.retryKey + 1 }))}><RefreshCw size={15} /><span>重新加载</span></button></div>;
     return <Fragment key={`canvas-recovery-${this.state.retryKey}`}>{this.props.children}</Fragment>;
   }
 }
@@ -639,10 +657,25 @@ function CanvasBoard({ nodes, onNodesChange, edges, setEdges, onEdgesChange, onA
     if (!file) return;
     onAddImageFile(file, reactFlow.screenToFlowPosition({ x: event.clientX, y: event.clientY }));
   }, [onAddImageFile, reactFlow]);
+  const handlePaste = useCallback((event) => {
+    if (event.target instanceof Element && event.target.closest("input,textarea,[contenteditable=\"true\"]")) return;
+    const clipboardItems = Array.from(event.clipboardData?.items || []);
+    const clipboardImage = clipboardItems.find((item) => item.type.startsWith("image/"))?.getAsFile();
+    const file = clipboardImage || Array.from(event.clipboardData?.files || []).find((item) => item.type.startsWith("image/"));
+    if (!file) return;
+    event.preventDefault();
+    const rect = canvasRef.current?.getBoundingClientRect();
+    const position = rect ? reactFlow.screenToFlowPosition({ x: rect.left + rect.width / 2 - 180, y: rect.top + rect.height / 2 - 180 }) : { x: 160, y: 140 };
+    onAddImageFile(file, position);
+  }, [canvasRef, onAddImageFile, reactFlow]);
+  useEffect(() => {
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [handlePaste]);
 
   const canvasResetKey = [nodes.length, edges.length, nodes.map((node) => [node.id, node.data?.status || "", node.data?.src ? "image" : ""].join(":")).join("|")].join(":");
   return (
-    <div className="canvas-shell" ref={canvasRef} onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
+    <div className="canvas-shell" ref={canvasRef} tabIndex={0} onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
       <CanvasErrorBoundary resetKey={canvasResetKey}>
       <ReactFlow
         nodes={nodes}
@@ -688,20 +721,25 @@ function CanvasBoard({ nodes, onNodesChange, edges, setEdges, onEdgesChange, onA
 class AppErrorBoundary extends Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, errorMessage: "" };
   }
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error) {
+    return { hasError: true, errorMessage: error?.message || String(error || "未知画布错误") };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    const details = [error?.message, errorInfo?.componentStack].filter(Boolean).join("\n\n");
+    if (details) this.setState({ errorMessage: details });
   }
 
   render() {
-    if (this.state.hasError) return <div className="app-recovery"><div><AlertCircle size={24} /><strong>画布需要重新加载</strong><button className="toolbar-button" onClick={() => window.location.reload()}><RefreshCw size={15} /><span>重新加载</span></button></div></div>;
+    if (this.state.hasError) return <div className="app-recovery"><div><AlertCircle size={24} /><strong>画布需要重新加载</strong><pre className="canvas-error-detail">{this.state.errorMessage || "未知画布错误"}</pre><button className="toolbar-button" onClick={() => window.location.reload()}><RefreshCw size={15} /><span>重新加载</span></button></div></div>;
     return this.props.children;
   }
 }
 
-function SettingsView({ config, apiKeyDraft, setApiKeyDraft, onChange, onSizeChange, onSave, onTest, onFetchModels, onRevealApiKey, onExport, onImport, onSelectProfile, onCreateProfile, onDeleteProfile, saveState, testState, modelFetchState, modelFetchError, fetchedModels, importRef }) {
+function SettingsView({ config, apiKeyDraft, setApiKeyDraft, onChange, onSizeChange, onSave, onTest, onFetchModels, onToggleFetchedModel, onRevealApiKey, onExport, onImport, onSelectProfile, onCreateProfile, onDeleteProfile, saveState, testState, modelFetchState, modelFetchError, fetchedModels, selectedModels, importRef }) {
   const [showApiKey, setShowApiKey] = useState(false);
   const sizeSelection = normalizeImageSizeSelection(config);
   const sizeOptions = getImageSizeOptions(config.model);
@@ -736,7 +774,7 @@ function SettingsView({ config, apiKeyDraft, setApiKeyDraft, onChange, onSizeCha
           <p className="field-note">{cn.keyNote}</p>
 
           <div className="field-grid model-size-grid">
-            <div><div className="model-field-heading"><label className="field-label" htmlFor="model">{cn.model}</label><button className="toolbar-button model-fetch-button" onClick={onFetchModels} disabled={modelFetchState === "loading"}>{modelFetchState === "loading" ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}<span>{modelFetchState === "loading" ? cn.fetchingModels : cn.fetchModels}</span></button></div><input id="model" list="image-model-options" value={config.model} onChange={(event) => onChange("model", event.target.value)} placeholder="gpt-image-2" />{modelFetchState === "success" && <div className="model-fetch-results"><span>{cn.modelsFetched}</span><div>{fetchedModels.map((model) => <button type="button" key={model} onClick={() => onChange("model", model)}>{model}</button>)}</div></div>}{modelFetchState === "empty" && <p className="model-fetch-empty">{cn.modelsEmpty}</p>}{modelFetchState === "error" && <p className="model-fetch-error">{modelFetchError || cn.modelsFetchFailed}</p>}</div>
+            <div><div className="model-field-heading"><label className="field-label" htmlFor="model">{cn.model}</label><button className="toolbar-button model-fetch-button" onClick={onFetchModels} disabled={modelFetchState === "loading"}>{modelFetchState === "loading" ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}<span>{modelFetchState === "loading" ? cn.fetchingModels : cn.fetchModels}</span></button></div><input id="model" list="image-model-options" value={config.model} onChange={(event) => onChange("model", event.target.value)} placeholder="gpt-image-2" />{modelFetchState === "success" && <div className="model-fetch-results"><span>{cn.modelsFetched}</span><div>{fetchedModels.map((model) => <button type="button" key={model} className={selectedModels.includes(model) ? "is-selected" : ""} aria-pressed={selectedModels.includes(model)} onClick={() => onToggleFetchedModel(model)}>{model}</button>)}</div></div>}{modelFetchState === "empty" && <p className="model-fetch-empty">{cn.modelsEmpty}</p>}{modelFetchState === "error" && <p className="model-fetch-error">{modelFetchError || cn.modelsFetchFailed}</p>}</div>
             <div><label className="field-label" htmlFor="image-resolution">{cn.size}</label><div className="size-selection-controls"><select id="image-resolution" value={sizeSelection.resolution} onChange={(event) => onSizeChange(getImageSizeSelection({ model: config.model, resolution: event.target.value, ratio: sizeSelection.ratio }))} aria-label="分辨率等级">{sizeOptions.resolutions.map((resolution) => <option key={resolution} value={resolution}>{resolution}</option>)}</select><select value={sizeSelection.ratio} onChange={(event) => onSizeChange(getImageSizeSelection({ model: config.model, resolution: sizeSelection.resolution, ratio: event.target.value }))} aria-label={cn.size}>{sizeOptions.ratios.map((ratio) => <option key={ratio} value={ratio}>{formatImageRatioOption(getImageSizeSelection({ model: config.model, resolution: sizeSelection.resolution, ratio }))}</option>)}</select></div></div>
           </div>
           <label className="field-label" htmlFor="quality">{cn.quality}</label>
@@ -815,11 +853,39 @@ function HistoryView({ history, onAddHistoryImage, onClearHistory, onDownload })
   );
 }
 
+function ImagePreviewDialog({ preview, onClose }) {
+  const [splitPosition, setSplitPosition] = useState(50);
+  const [zoom, setZoom] = useState(1);
+  const generatedSource = displayImageSource(preview.src);
+  const originalSource = displayImageSource(preview.originalSrc);
+  const hasComparison = Boolean(preview.originalSrc && preview.originalSrc !== preview.src);
+  const handleWheel = useCallback((event) => {
+    event.preventDefault();
+    setZoom((current) => Math.max(0.5, Math.min(4, current - event.deltaY * 0.001)));
+  }, []);
+  const handleComparisonPointerMove = useCallback((event) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (!rect.width) return;
+    setSplitPosition(Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)));
+  }, []);
+  return <div className="dialog-backdrop image-preview-backdrop" role="presentation" onMouseDown={onClose}>
+    <section className="image-preview-dialog" role="dialog" aria-modal="true" aria-label={preview.title || cn.generatedImage} onMouseDown={(event) => event.stopPropagation()} onWheel={handleWheel}>
+      <button className="icon-button image-preview-close" onClick={onClose} aria-label={cn.close} title={cn.close}><X size={18} /></button>
+      {hasComparison ? <div className="image-comparison-stage" onPointerMove={handleComparisonPointerMove} style={{ transform: `scale(${zoom})` }}>
+        <img className="image-comparison-layer" src={originalSource} alt="" draggable="false" />
+        <img className="image-comparison-layer image-comparison-generated" src={generatedSource} alt={preview.title || cn.generatedImage} draggable="false" style={{ clipPath: `inset(0 0 0 ${splitPosition}%)` }} />
+        <div className="image-comparison-divider" style={{ left: `${splitPosition}%` }} />
+        <input className="image-comparison-slider" type="range" min="0" max="100" value={splitPosition} onChange={(event) => setSplitPosition(Number(event.target.value))} aria-label="图片对比位置" />
+      </div> : <img src={generatedSource} alt={preview.title || cn.generatedImage} draggable="false" style={{ transform: `scale(${zoom})` }} />}
+      <span>{preview.title}</span>
+    </section>
+  </div>;
+}
+
 function AppShell() {
   const [activePanel, setActivePanel] = useState("canvas");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const handlersRef = useRef({});
-  const generatingPromptIdsRef = useRef(new Set());
   const stablePromptChange = useCallback((id, prompt) => handlersRef.current.updatePrompt?.(id, prompt), []);
   const stableReferenceChange = useCallback((id, value) => handlersRef.current.updateReference?.(id, value), []);
   const stableReferenceFiles = useCallback((id, files) => handlersRef.current.referenceFiles?.(id, files), []);
@@ -829,7 +895,7 @@ function AppShell() {
   const stableDelete = useCallback((id) => handlersRef.current.deleteNode?.(id), []);
   const stableDownload = useCallback((src, title) => handlersRef.current.downloadImage?.(src, title), []);
   const stableOpen = useCallback((src) => handlersRef.current.openImage?.(src), []);
-  const stablePreview = useCallback((src, title) => handlersRef.current.previewImage?.(src, title), []);
+  const stablePreview = useCallback((src, title, originalSrc) => handlersRef.current.previewImage?.(src, title, originalSrc), []);
   const stableShowPrompt = useCallback((id) => handlersRef.current.showPromptForImage?.(id), []);
   const stableParamChange = useCallback((id, key, value) => handlersRef.current.updateNodeParam?.(id, key, value), []);
   const stableSizeChange = useCallback((id, selection) => handlersRef.current.updateNodeSize?.(id, selection), []);
@@ -839,16 +905,20 @@ function AppShell() {
   const [modelFetchState, setModelFetchState] = useState("idle");
   const [modelFetchError, setModelFetchError] = useState("");
   const [fetchedModelsByProfile, setFetchedModelsByProfile] = useState(loadFetchedModelsByProfile);
+  const [selectedModelsByProfile, setSelectedModelsByProfile] = useState(loadSelectedModelsByProfile);
   const initialCanvasState = useMemo(() => loadCanvasState(), []);
   const [canvasState, setCanvasState] = useState(initialCanvasState);
   const activeCanvasId = canvasState.activeId;
   const activeCanvas = canvasState.canvases.find((canvas) => canvas.id === activeCanvasId) || canvasState.canvases[0];
   const activeFetchedModels = fetchedModelsByProfile[config.activeProfileId] || [];
+  const activeSelectedModels = selectedModelsByProfile[config.activeProfileId] || [];
   const imageModelOptions = useMemo(() => [...new Set([...SUPPORTED_IMAGE_MODELS, ...activeFetchedModels])], [activeFetchedModels]);
   const getProfileModelOptions = useCallback((profileId) => {
-    const models = fetchedModelsByProfile[profileId];
-    return Array.isArray(models) ? models : SUPPORTED_IMAGE_MODELS;
-  }, [fetchedModelsByProfile]);
+    const fetchedModels = fetchedModelsByProfile[profileId];
+    if (!Array.isArray(fetchedModels)) return SUPPORTED_IMAGE_MODELS;
+    const selectedModels = selectedModelsByProfile[profileId];
+    return Array.isArray(selectedModels) ? selectedModels.filter((model) => fetchedModels.includes(model)) : fetchedModels;
+  }, [fetchedModelsByProfile, selectedModelsByProfile]);
   const seededNodes = useMemo(() => (activeCanvas?.nodes || []).map((node) => ({ ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, modelOptions: getProfileModelOptions(node.data?.profileId || config.activeProfileId), onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onParamChange: stableParamChange, onSizeChange: stableSizeChange } })), [activeCanvasId, config.activeProfileId, config.profiles, getProfileModelOptions, stableDelete, stableFileSize, stableGenerate, stableGroupFiles, stableGroupImagesChange, stableParamChange, stablePreview, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableShowPrompt, stableSizeChange]);
   const [nodes, setNodes, onNodesChange] = useNodesState(seededNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(activeCanvas?.edges || []);
@@ -883,7 +953,7 @@ function AppShell() {
   }, [flowInstance]);
   useEffect(() => { if (!config.profiles?.length) return; setNodes((current) => current.map((node) => {
     const modelOptions = getProfileModelOptions(node.data?.profileId || config.activeProfileId);
-    const model = node.type === "prompt" && modelOptions.length && !modelOptions.includes(node.data?.model) ? modelOptions[0] : node.data?.model;
+    const model = node.type === "prompt" ? (modelOptions.length ? (modelOptions.includes(node.data?.model) ? node.data.model : modelOptions[0]) : "") : node.data?.model;
     return { ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, ...(node.type === "prompt" ? { modelOptions, model } : {}) } };
   })); }, [config.activeProfileId, config.profiles, getProfileModelOptions, setNodes]);
   useEffect(() => {
@@ -894,6 +964,9 @@ function AppShell() {
   useEffect(() => {
     try { localStorage.setItem(FETCHED_MODELS_KEY, JSON.stringify(fetchedModelsByProfile)); } catch { /* Keep model discovery available for this session if storage is full. */ }
   }, [fetchedModelsByProfile]);
+  useEffect(() => {
+    try { localStorage.setItem(SELECTED_MODELS_KEY, JSON.stringify(selectedModelsByProfile)); } catch { /* Keep model selection available for this session if storage is full. */ }
+  }, [selectedModelsByProfile]);
   useEffect(() => { if (!toast) return undefined; const timer = window.setTimeout(() => setToast(""), 3600); return () => window.clearTimeout(timer); }, [toast]);
   useEffect(() => {
     setCanvasState((current) => ({
@@ -961,19 +1034,23 @@ function AppShell() {
   }, []);
 
   const openImage = useCallback((src) => window.open(displayImageSource(src), "_blank", "noopener,noreferrer"), []);
-  const openImagePreview = useCallback((src, title) => setPreviewImage({ src, title }), []);
+  const openImagePreview = useCallback((src, title, originalSrc = "") => setPreviewImage({ src, title, originalSrc }), []);
   const appendGenerationLog = useCallback((entry) => setGenerationLogs((current) => [{ id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, createdAt: new Date().toISOString(), ...entry }, ...current].slice(0, 50)), []);
-  const appendHistory = useCallback((item) => setHistory((current) => { const next = [item, ...current.filter((entry) => entry.id !== item.id)].slice(0, 50); localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); return next; }), []);
+  const appendHistory = useCallback((item) => setHistory((current) => {
+    const next = [item, ...current.filter((entry) => entry.id !== item.id)].slice(0, 50);
+    persistHistorySafely(next);
+    return next;
+  }), []);
 
   const generateImage = useCallback(async (id) => {
     const source = nodes.find((node) => node.id === id);
     const prompt = String(source?.data?.prompt || "").trim();
-    if (!source || !prompt || source.data?.status === "generating" || generatingPromptIdsRef.current.has(id)) return;
-    generatingPromptIdsRef.current.add(id);
+    if (!source || !prompt) return;
     let outputNodeIds = [];
     updateNodeData(id, { status: "generating", error: "", generationStartedAt: new Date().toISOString() });
     try {
-      const model = String(source.data.model || config.model).trim();
+      const model = String(source.data.model || "").trim();
+      if (!model) throw new Error(cn.modelRequired);
       const sizeSelection = normalizeImageSizeSelection({ model, resolution: source.data.resolution || config.resolution, ratio: source.data.ratio || config.ratio, size: source.data.size || config.size });
       const size = sizeSelection.size;
       const quality = String(source.data.quality || config.quality).trim();
@@ -984,7 +1061,7 @@ function AppShell() {
       });
       const tasks = groupedImages.length ? groupedImages.map((image) => [image]) : [directReferences];
       const createdAt = new Date().toISOString();
-      const generationBatchId = Date.now();
+      const generationBatchId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const sourceWidth = Number(source.width || source.measured?.width || source.style?.width || 580);
       const existingOutputBottom = nodes
         .filter((node) => node.type === "image" && node.data?.sourcePromptId === id)
@@ -998,7 +1075,7 @@ function AppShell() {
       const requestProfile = (config.profiles || []).find((profile) => profile.id === requestProfileId);
       const outputNodes = tasks.map((referenceImages, index) => {
         const imageId = `image-${generationBatchId}-${index}`;
-        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80, y: outputStartY + index * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", prompt, title: prompt, model, quality, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: referenceImages.length, responseFormat: requestProfile?.responseFormat || config.responseFormat || "b64_json", createdAt, status: "generating", error: "", onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onPreview: stablePreview, onFileSize: stableFileSize, onShowPrompt: stableShowPrompt } };
+        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80, y: outputStartY + index * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", comparisonSource: referenceImages[0] || "", prompt, title: prompt, model, quality, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: referenceImages.length, responseFormat: requestProfile?.responseFormat || config.responseFormat || "b64_json", createdAt, status: "generating", error: "", onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onPreview: stablePreview, onFileSize: stableFileSize, onShowPrompt: stableShowPrompt } };
       });
       outputNodeIds = outputNodes.map((node) => node.id);
       setNodes((current) => [...current, ...outputNodes]);
@@ -1048,15 +1125,13 @@ function AppShell() {
     } catch (error) {
       if (outputNodeIds.length) setNodes((current) => current.map((node) => outputNodeIds.includes(node.id) && !node.data?.src ? { ...node, data: { ...node.data, status: "error", error: error.message || cn.generationFailed, responseText: error.message || cn.generationFailed, rawResponseText: "" } } : node));
       updateNodeData(id, { status: "error", error: error.message || cn.generationFailed, generationStartedAt: "" });
-    } finally {
-      generatingPromptIdsRef.current.delete(id);
     }
   }, [appendGenerationLog, appendHistory, config.activeProfileId, config.model, config.quality, config.size, edges, nodes, setEdges, setNodes, stableDelete, stableDownload, stableFileSize, stableOpen, stablePreview, stableShowPrompt, updateNodeData]);
 
   const addPromptAt = useCallback((position) => {
     const id = `prompt-${Date.now()}`;
     const modelOptions = getProfileModelOptions(config.activeProfileId);
-    const model = modelOptions.includes(config.model) ? config.model : (modelOptions[0] || config.model);
+    const model = modelOptions.includes(config.model) ? config.model : (modelOptions[0] || "");
     const sizeSelection = normalizeImageSizeSelection({ ...config, model });
     setNodes((current) => [...current, { id, type: "prompt", position, style: { width: 580, height: 580 }, data: { prompt: "", referenceImages: [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } }]);
     setActivePanel("canvas");
@@ -1081,10 +1156,10 @@ function AppShell() {
     const isImage = sourceNode.type === "image";
     const modelOptions = getProfileModelOptions(config.activeProfileId);
     const sourceModel = sourceNode.data.model || config.model;
-    const model = modelOptions.includes(sourceModel) ? sourceModel : (modelOptions[0] || sourceModel);
+    const model = modelOptions.includes(sourceModel) ? sourceModel : (modelOptions[0] || "");
     const sizeSelection = normalizeImageSizeSelection({ model, resolution: sourceNode.data.resolution || config.resolution, ratio: sourceNode.data.ratio || config.ratio, size: sourceNode.data.size || config.size });
     const sourceHeight = Number(sourceNode.height || sourceNode.measured?.height || sourceNode.style?.height || (isImage ? 390 : 460));
-    const promptNode = { id, type: "prompt", position: { x: sourceNode.position.x, y: sourceNode.position.y + sourceHeight + 60 }, style: { width: 580, height: 580 }, data: { sourceNodeId: sourceId, sourceImageId: isImage ? sourceId : "", prompt: sourceNode.data.prompt || sourceNode.data.title || "", referenceImages: isImage && sourceNode.data.src ? [sourceNode.data.src] : [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } };
+    const promptNode = { id, type: "prompt", position: { x: sourceNode.position.x, y: sourceNode.position.y + sourceHeight + 60 }, style: { width: 580, height: 580 }, data: { sourceNodeId: sourceId, sourceImageId: isImage ? sourceId : "", prompt: "", referenceImages: isImage && sourceNode.data.src ? [sourceNode.data.src] : [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } };
     setNodes((current) => [...current, promptNode]);
     setEdges((current) => current.some((edge) => edge.source === sourceId && edge.target === id) ? current : [...current, { id: `edge-${sourceId}-${id}`, source: sourceId, target: id, animated: true, style: { stroke: isImage ? "#7dc7b9" : "#86a9e9", strokeWidth: 1.5 } }]);
   }, [config, getProfileModelOptions, nodes, setEdges, setNodes, stableDelete, stableGenerate, stableParamChange, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableSizeChange]);
@@ -1195,12 +1270,25 @@ function AppShell() {
       if (!response.ok) throw new Error(result.error || cn.modelsFetchFailed);
       const models = Array.isArray(result.models) ? [...new Set(result.models.filter(Boolean))] : [];
       setFetchedModelsByProfile((current) => ({ ...current, [config.activeProfileId]: models }));
+      setSelectedModelsByProfile((current) => {
+        const existing = Array.isArray(current[config.activeProfileId]) ? current[config.activeProfileId] : [];
+        return { ...current, [config.activeProfileId]: existing.filter((model) => models.includes(model)) };
+      });
       setModelFetchState(models.length ? "success" : "empty");
     } catch (error) {
       setModelFetchError(error.message || cn.modelsFetchFailed);
       setModelFetchState("error");
     }
   }, [apiKeyDraft, config.activeProfileId, config.endpoint]);
+
+  const toggleFetchedModel = useCallback((model) => {
+    const profileId = config.activeProfileId;
+    setSelectedModelsByProfile((current) => {
+      const selected = Array.isArray(current[profileId]) ? current[profileId] : [];
+      const next = selected.includes(model) ? selected.filter((item) => item !== model) : [...selected, model];
+      return { ...current, [profileId]: next };
+    });
+  }, [config.activeProfileId]);
 
   const exportConfig = useCallback(async () => {
     const response = await fetch("/api/config/export");
@@ -1246,12 +1334,12 @@ function AppShell() {
   const handleFitView = useCallback(() => flowInstance?.fitView({ padding: 0.2, duration: 250 }), [flowInstance]);
 
   const visibleNodeCount = nodes.length;
-  const view = activePanel === "settings" ? <SettingsView config={config} apiKeyDraft={apiKeyDraft} setApiKeyDraft={setApiKeyDraft} onChange={(key, value) => { setConfig((current) => ({ ...current, [key]: value })); setSaveState("idle"); setTestState("idle"); }} onSizeChange={(selection) => { setConfig((current) => ({ ...current, ...selection })); setSaveState("idle"); setTestState("idle"); }} onSelectProfile={selectProfile} onCreateProfile={createProfile} onDeleteProfile={deleteProfile} onSave={saveSettings} onTest={testConnection} onFetchModels={fetchModels} onRevealApiKey={revealApiKey} onExport={exportConfig} onImport={importConfig} saveState={saveState} testState={testState} modelFetchState={modelFetchState} modelFetchError={modelFetchError} fetchedModels={activeFetchedModels} importRef={importRef} /> : activePanel === "history" ? <HistoryView history={history} onAddHistoryImage={addHistoryImage} onClearHistory={clearHistory} onDownload={downloadImage} /> : <>
+  const view = activePanel === "settings" ? <SettingsView config={config} apiKeyDraft={apiKeyDraft} setApiKeyDraft={setApiKeyDraft} onChange={(key, value) => { setConfig((current) => ({ ...current, [key]: value })); setSaveState("idle"); setTestState("idle"); }} onSizeChange={(selection) => { setConfig((current) => ({ ...current, ...selection })); setSaveState("idle"); setTestState("idle"); }} onSelectProfile={selectProfile} onCreateProfile={createProfile} onDeleteProfile={deleteProfile} onSave={saveSettings} onTest={testConnection} onFetchModels={fetchModels} onToggleFetchedModel={toggleFetchedModel} onRevealApiKey={revealApiKey} onExport={exportConfig} onImport={importConfig} saveState={saveState} testState={testState} modelFetchState={modelFetchState} modelFetchError={modelFetchError} fetchedModels={activeFetchedModels} selectedModels={activeSelectedModels} importRef={importRef} /> : activePanel === "history" ? <HistoryView history={history} onAddHistoryImage={addHistoryImage} onClearHistory={clearHistory} onDownload={downloadImage} /> : <>
     <Topbar onFitView={handleFitView} onZoomIn={handleZoomIn} onZoomOut={handleZoomOut} onOpenSettings={() => setActivePanel("settings")} onOpenLogs={() => setLogsOpen(true)} selectedCount={selectedCount} />
     <CanvasBoard nodes={nodes} onNodesChange={onNodesChange} edges={edges} setEdges={setEdges} onEdgesChange={onEdgesChange} onAddPrompt={addPromptAt} onAddGroup={addGroupAt} onAddImageFile={addImageFileAt} onSelectedChange={setSelectedCount} canvasRef={canvasRef} onInit={setFlowInstance} />
   </>;
 
-  return <div className="app-frame"><datalist id="image-model-options">{imageModelOptions.map((model) => <option key={model} value={model} />)}</datalist><Sidebar activePanel={activePanel} setActivePanel={setActivePanel} collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} canvases={canvasState.canvases} activeCanvasId={activeCanvasId} onSelectCanvas={selectCanvas} onCreateCanvas={createCanvas} onDeleteCanvas={deleteCanvas} onRenameCanvas={renameCanvas} nodeCount={visibleNodeCount} historyCount={history.length} /><main className="main-area">{view}</main>{logsOpen && <GenerationLogsDialog logs={generationLogs} onClose={() => setLogsOpen(false)} />}{previewImage && <div className="dialog-backdrop image-preview-backdrop" role="presentation" onMouseDown={() => setPreviewImage(null)}><section className="image-preview-dialog" role="dialog" aria-modal="true" aria-label={previewImage.title || cn.generatedImage} onMouseDown={(event) => event.stopPropagation()}><button className="icon-button image-preview-close" onClick={() => setPreviewImage(null)} aria-label={cn.close} title={cn.close}><X size={18} /></button><img src={previewImage.src} alt={previewImage.title || cn.generatedImage} /><span>{previewImage.title}</span></section></div>}{toast && <div className="toast"><CheckCircle2 size={16} />{toast}<button className="icon-button subtle" onClick={() => setToast("")} aria-label={cn.dismiss}><X size={14} /></button></div>}</div>;
+  return <div className="app-frame"><datalist id="image-model-options">{imageModelOptions.map((model) => <option key={model} value={model} />)}</datalist><Sidebar activePanel={activePanel} setActivePanel={setActivePanel} collapsed={sidebarCollapsed} setCollapsed={setSidebarCollapsed} canvases={canvasState.canvases} activeCanvasId={activeCanvasId} onSelectCanvas={selectCanvas} onCreateCanvas={createCanvas} onDeleteCanvas={deleteCanvas} onRenameCanvas={renameCanvas} nodeCount={visibleNodeCount} historyCount={history.length} /><main className="main-area">{view}</main>{logsOpen && <GenerationLogsDialog logs={generationLogs} onClose={() => setLogsOpen(false)} />}{previewImage && <ImagePreviewDialog preview={previewImage} onClose={() => setPreviewImage(null)} />}{toast && <div className="toast"><CheckCircle2 size={16} />{toast}<button className="icon-button subtle" onClick={() => setToast("")} aria-label={cn.dismiss}><X size={14} /></button></div>}</div>;
 }
 
 export default function App() {
