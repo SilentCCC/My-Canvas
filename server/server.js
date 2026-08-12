@@ -12,6 +12,7 @@ const defaultOutputDir = path.join(projectRoot, "output");
 const legacyDefaultOutputDir = "E:\\Canvas\\output";
 const imageGenerationTimeoutMs = 180_000;
 const verifiedImageResponseOptions = { n: 1 };
+const imageSaveJobs = new Map();
 
 const defaultProfile = {
   id: "default",
@@ -26,7 +27,6 @@ const defaultProfile = {
   size: "1024x1024",
   quality: "high",
   responseFormat: "b64_json",
-  autoSave: true,
   outputDir: defaultOutputDir
 };
 
@@ -168,7 +168,6 @@ function sanitizeProfile(profile, index = 0) {
     size: String(source.size || defaultProfile.size).trim() || defaultProfile.size,
     quality: String(source.quality || defaultProfile.quality).trim() || defaultProfile.quality,
     responseFormat: source.responseFormat === "url" ? "url" : "b64_json",
-    autoSave: source.autoSave !== false,
     outputDir: requestedOutputDir && requestedOutputDir !== legacyDefaultOutputDir ? requestedOutputDir : defaultProfile.outputDir
   };
 }
@@ -219,7 +218,6 @@ function publicProfile(profile) {
     size: profile.size,
     quality: profile.quality,
     responseFormat: profile.responseFormat,
-    autoSave: profile.autoSave,
     outputDir: profile.outputDir,
     hasApiKey: Boolean(profile.apiKey)
   };
@@ -260,7 +258,15 @@ function getImageFromPayload(payload) {
       const image = toImageSource(value[key], true);
       if (image) return image;
     }
-    for (const key of ["data", "images", "image", "result", "results", "output", "outputs"]) {
+    for (const key of ["inlineData", "inline_data"]) {
+      const inline = value[key];
+      if (inline && typeof inline === "object") {
+        const mimeType = String(inline.mimeType || inline.mime_type || "image/png").trim() || "image/png";
+        const encoded = String(inline.data || inline.bytes || "").trim();
+        if (encoded) return `data:${mimeType};base64,${encoded}`;
+      }
+    }
+    for (const key of ["data", "images", "image", "result", "results", "output", "outputs", "candidates", "content", "parts"]) {
       const image = findImage(value[key], depth + 1);
       if (image) return image;
     }
@@ -283,27 +289,45 @@ function filenamePart(value) {
 }
 
 async function saveImageToDisk(imageUrl, model, outputDir) {
-  await fs.mkdir(outputDir, { recursive: true });
   let buffer;
   let extension = "png";
+  let imageDownloadDurationMs = 0;
   if (imageUrl.startsWith("data:")) {
     const match = imageUrl.match(/^data:([^;,]+)?;base64,(.+)$/);
     if (!match) throw new Error("Invalid base64 image.");
     buffer = Buffer.from(match[2], "base64");
     extension = (match[1] || "image/png").split("/")[1] || "png";
   } else {
+    const downloadStartedAt = Date.now();
     const response = await fetch(imageUrl);
     if (!response.ok) throw new Error(`Image download returned ${response.status}.`);
     const contentType = response.headers.get("content-type") || "image/png";
     extension = contentType.split("/")[1]?.split(";")[0] || "png";
     buffer = Buffer.from(await response.arrayBuffer());
+    imageDownloadDurationMs = Date.now() - downloadStartedAt;
   }
   const now = new Date();
   const timestamp = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("") + "-" + [String(now.getHours()).padStart(2, "0"), String(now.getMinutes()).padStart(2, "0"), String(now.getSeconds()).padStart(2, "0"), String(now.getMilliseconds()).padStart(3, "0")].join("");
   const filename = `${timestamp}-${filenamePart(model)}.${extension}`;
   const filePath = path.join(outputDir, filename);
+  const localWriteStartedAt = Date.now();
+  await fs.mkdir(outputDir, { recursive: true });
   await fs.writeFile(filePath, buffer);
-  return { filePath, fileSize: buffer.length };
+  return { filePath, fileSize: buffer.length, imageDownloadDurationMs, localWriteDurationMs: Date.now() - localWriteStartedAt };
+}
+
+function localImageUrl(filePath) {
+  return `/api/saved-image?file=${encodeURIComponent(Buffer.from(filePath, "utf8").toString("base64url"))}`;
+}
+
+function pathIsWithin(filePath, root) {
+  const relative = path.relative(path.resolve(root), path.resolve(filePath));
+  return relative && !relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative);
+}
+
+async function localImageRoots() {
+  const state = await readConfig();
+  return [...new Set(state.profiles.map((profile) => profile.outputDir))];
 }
 
 const app = express();
@@ -345,7 +369,6 @@ app.post("/api/config", async (req, res) => {
     size: body.size ?? current.size,
     quality: body.quality ?? current.quality,
     responseFormat: body.responseFormat ?? current.responseFormat,
-    autoSave: body.autoSave ?? current.autoSave,
     outputDir: body.outputDir ?? current.outputDir,
     apiKey: typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey : current.apiKey
   });
@@ -438,10 +461,12 @@ app.post("/api/generate", async (req, res) => {
   if (!apiKey) return res.status(400).json({ ok: false, error: "\u8bf7\u5148\u5728 API \u8bbe\u7f6e\u4e2d\u586b\u5199 API Key\u3002" });
   const model = String(req.body?.model || config.model || defaultProfile.model).trim();
   const size = String(req.body?.size || config.size || defaultProfile.size).trim();
-  const quality = String(req.body?.quality || config.quality || defaultProfile.quality).trim();
+  const requestedQuality = String(req.body?.quality || config.quality || defaultProfile.quality).trim().toLowerCase();
+  const quality = ["low", "medium", "high"].includes(requestedQuality) ? requestedQuality : "";
   const responseFormat = config.responseFormat === "url" ? "url" : "b64_json";
   const referenceImages = (Array.isArray(req.body?.referenceImages) ? req.body.referenceImages : [req.body?.referenceImage]).map((value) => String(value || "").trim()).filter(Boolean).slice(0, 5);
   try {
+    const apiRequestStartedAt = Date.now();
     let response;
     let bodyText;
     if (referenceImages.length) {
@@ -449,7 +474,7 @@ app.post("/api/generate", async (req, res) => {
       form.append("model", model);
       form.append("prompt", prompt);
       form.append("size", size);
-      form.append("quality", quality);
+      if (quality) form.append("quality", quality);
       form.append("response_format", responseFormat);
       for (const [index, referenceImage] of referenceImages.entries()) {
         form.append("image", await imageBlobFromInput(referenceImage), `reference-${index + 1}.png`);
@@ -459,36 +484,92 @@ app.post("/api/generate", async (req, res) => {
       ({ response, bodyText } = await fetchImageGeneration(generationUrl(config.endpoint), {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt, size, quality, ...verifiedImageResponseOptions, response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) })
+        body: JSON.stringify({ model, prompt, size, ...(quality ? { quality } : {}), ...verifiedImageResponseOptions, response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) })
       }));
     }
     let payload = {};
     try { payload = JSON.parse(bodyText); } catch { /* The provider may return a non-JSON error body. */ }
     const responseText = providerResponseText(payload, bodyText);
     const rawResponseText = responseText;
+    const apiRequestDurationMs = Date.now() - apiRequestStartedAt;
     if (!response.ok) return res.status(response.status).json({ ok: false, error: payload?.error?.message || `Image generation returned ${response.status}.`, responseText, rawResponseText });
     const imageUrl = getImageFromPayload(payload);
     if (!imageUrl) return res.status(502).json({ ok: false, error: "\u670d\u52a1\u5546\u6ca1\u6709\u8fd4\u56de\u56fe\u7247 URL \u6216 base64 \u56fe\u7247\u3002", responseText, rawResponseText });
-    let savedPath = "";
-    let fileSize = 0;
-    let saveError = "";
-    if (config.autoSave && imageUrl.startsWith("data:")) {
-      try {
-        const savedImage = await saveImageToDisk(imageUrl, model, config.outputDir);
-        savedPath = savedImage.filePath;
-        fileSize = savedImage.fileSize;
-      } catch (error) {
-        saveError = error.message || "Automatic save failed.";
-      }
-    }
-    res.json({ ok: true, imageUrl, revisedPrompt: payload?.data?.[0]?.revised_prompt || "", savedPath, fileSize, saveError, responseText, rawResponseText });
-    if (config.autoSave && !imageUrl.startsWith("data:")) {
-      void saveImageToDisk(imageUrl, model, config.outputDir).catch((error) => console.warn("[AI Canvas] Automatic image save failed:", error.message || error));
-    }
+    const sourceImageUrl = imageUrl;
+    const saveJobId = `save-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    imageSaveJobs.set(saveJobId, { status: "pending", sourceImageUrl, model, outputDir: config.outputDir, createdAt: Date.now() });
+    res.json({ ok: true, imageUrl: sourceImageUrl, sourceImageUrl, saveJobId, saveStatus: "pending", revisedPrompt: payload?.data?.[0]?.revised_prompt || "", apiRequestDurationMs, responseText, rawResponseText });
   } catch (error) {
     if (error?.code === "IMAGE_GENERATION_TIMEOUT") return res.status(504).json({ ok: false, error: error.message, responseText: error.message, rawResponseText: "" });
     const errorMessage = error.message || "\u65e0\u6cd5\u8fde\u63a5\u56fe\u7247\u670d\u52a1\u5546\u3002";
     res.status(502).json({ ok: false, error: errorMessage, responseText: errorMessage, rawResponseText: "" });
+  }
+});
+
+app.get("/api/image-save-status/:jobId", (req, res) => {
+  const job = imageSaveJobs.get(String(req.params.jobId || ""));
+  if (!job) return res.status(404).json({ ok: false, error: "Image save job not found." });
+  res.json({ ok: true, ...job });
+  if (job.status === "completed" || job.status === "error") imageSaveJobs.delete(String(req.params.jobId || ""));
+});
+
+app.post("/api/image-save-fallback/:jobId", async (req, res) => {
+  const jobId = String(req.params.jobId || "");
+  const job = imageSaveJobs.get(jobId);
+  if (!job) return res.status(404).json({ ok: false, error: "Image save job not found." });
+  if (job.status === "completed") return res.json({ ok: true, ...job });
+  if (job.status !== "pending") return res.status(409).json({ ok: false, error: "Image save job is not available." });
+  imageSaveJobs.set(jobId, { ...job, status: "server-saving" });
+  try {
+    const savedImage = await saveImageToDisk(job.sourceImageUrl, job.model, job.outputDir);
+    const completed = { status: "completed", savedPath: savedImage.filePath, localImageUrl: localImageUrl(savedImage.filePath), fileSize: savedImage.fileSize, imageDownloadDurationMs: savedImage.imageDownloadDurationMs, localWriteDurationMs: savedImage.localWriteDurationMs, updatedAt: Date.now() };
+    imageSaveJobs.set(jobId, completed);
+    res.json({ ok: true, ...completed });
+  } catch (error) {
+    const current = imageSaveJobs.get(jobId);
+    if (current?.status === "server-saving") imageSaveJobs.set(jobId, { ...job, status: "error", error: error.message || "Image download and save failed.", updatedAt: Date.now() });
+    res.status(502).json({ ok: false, error: error.message || "Image download and save failed." });
+  }
+});
+
+app.post("/api/image-save-upload/:jobId", async (req, res) => {
+  const jobId = String(req.params.jobId || "");
+  const job = imageSaveJobs.get(jobId);
+  if (!job) return res.status(404).json({ ok: false, error: "Image save job not found." });
+  if (job.status === "completed") return res.json({ ok: true, ...job });
+  if (job.status !== "pending") return res.status(409).json({ ok: false, error: "Image save job is not available." });
+  const imageData = String(req.body?.imageData || "");
+  const browserDownloadDurationMs = Number(req.body?.imageDownloadDurationMs);
+  if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(imageData)) return res.status(400).json({ ok: false, error: "Invalid image data." });
+  imageSaveJobs.set(jobId, { ...job, status: "browser-saving" });
+  try {
+    const savedImage = await saveImageToDisk(imageData, job.model, job.outputDir);
+    const completed = { status: "completed", savedPath: savedImage.filePath, localImageUrl: localImageUrl(savedImage.filePath), fileSize: savedImage.fileSize, imageDownloadDurationMs: Number.isFinite(browserDownloadDurationMs) && browserDownloadDurationMs >= 0 ? browserDownloadDurationMs : 0, localWriteDurationMs: savedImage.localWriteDurationMs, updatedAt: Date.now() };
+    imageSaveJobs.set(jobId, completed);
+    res.json({ ok: true, ...completed });
+  } catch (error) {
+    imageSaveJobs.set(jobId, { ...job, status: "pending" });
+    res.status(500).json({ ok: false, error: error.message || "Local image save failed." });
+  }
+});
+
+function localImageUrlForPath(filePath) {
+  return localImageUrl(filePath);
+}
+
+app.get("/api/saved-image", async (req, res) => {
+  let filePath;
+  try { filePath = Buffer.from(String(req.query.file || ""), "base64url").toString("utf8"); } catch { return res.status(400).send("Invalid image file."); }
+  if (!filePath) return res.status(400).send("Invalid image file.");
+  try {
+    const roots = await localImageRoots();
+    if (!roots.some((root) => pathIsWithin(filePath, root))) return res.status(403).send("Image file is outside configured storage.");
+    const stats = await fs.stat(filePath);
+    if (!stats.isFile()) return res.status(404).send("Image file not found.");
+    res.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+    res.sendFile(path.resolve(filePath));
+  } catch {
+    res.status(404).send("Image file not found.");
   }
 });
 

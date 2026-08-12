@@ -28,7 +28,7 @@
 
 - 当前版本号：
   - `package.json`：`0.1.0`
-  - 开发上下文版本：`0.1.0-dev.2026-08-10.01`
+  - 开发上下文版本：`0.1.0-dev.2026-08-11.02`
 
 ### 已完成的功能
 
@@ -65,6 +65,7 @@
   - 支持 `1K`、`2K`、`4K`；比例固定顺序为 `1:1`、`2:3`、`3:2`、`3:4`、`4:3`、`9:16`、`16:9`、`9:21`、`21:9`。
   - 选择数据保存为 `resolution`、`ratio`、`width`、`height`、`size`，生成 API 只接收最终的 `size`。
   - 尺寸映射独立维护在 `web/src/config/imageSizes.js`，可扩展给 Flux、Gemini Image 等模型。
+  - Prompt 节点支持“自定义”分辨率，宽高输入范围为 `1` 到 `16384`，请求会发送最终的 `宽x高` 尺寸。
 - 图片节点：
   - 生成后自动添加到画布。
   - 支持拖动、缩放、打开、下载、删除。
@@ -714,4 +715,41 @@ fix: lock duplicate image generation and stack result nodes
 
 ```text
 feat: support concurrent generation and interactive image preview
+```
+
+### 2026-08-11（Gemini 图片模型）
+
+- 上下文版本：`0.1.0-dev.2026-08-11.01`
+- 修改内容：增加 Gemini 图片预览模型到内置模型列表。
+- 涉及文件：
+  - `web/src/config/imageSizes.js`
+  - `README.md`
+  - `CODEX_CONTEXT.md`
+- 已完成：
+  - 支持 `gemini-3-pro-image-preview`。
+  - 支持 `gemini-3.1-flash-image-preview`。
+  - 两个模型复用当前联动尺寸配置，并可在 API 配置和 Prompt 节点中选择；后端会原样向配置的第三方 Endpoint 发送模型名。
+- 验证结果：待运行 `npm.cmd run build`。
+- 建议提交信息：
+
+```text
+feat: add Gemini image preview models
+```
+
+### 2026-08-11（Prompt 自定义分辨率）
+
+- 上下文版本：`0.1.0-dev.2026-08-11.02`
+- 修改内容：在 Prompt 节点的分辨率菜单中增加自定义尺寸输入。
+- 涉及文件：
+  - `web/src/config/imageSizes.js`
+  - `web/src/App.jsx`
+  - `web/src/styles.css`
+  - `README.md`
+  - `CODEX_CONTEXT.md`
+- 已完成：选择“自定义”后显示宽度和高度输入框；宽高保存为 `width`、`height` 和最终 `size`，文生图与图生图请求都会使用自定义尺寸。
+- 尺寸限制：每个维度为 `1` 到 `16384` 像素。
+- 建议提交信息：
+
+```text
+feat: support custom prompt image dimensions
 ```

@@ -7,6 +7,7 @@
 - 无限画布支持平移、滚轮缩放、节点拖动、连线、删除和多画布管理。
 - Prompt 节点支持选择 API 配置档、模型、质量和联动尺寸。
 - 图片尺寸支持 `1K`、`2K`、`4K`，比例支持 `1:1`、`2:3`、`3:2`、`3:4`、`4:3`、`9:16`、`16:9`、`9:21`、`21:9`。
+- Prompt 节点尺寸菜单支持“自定义”，可直接填写宽度和高度并按自定义分辨率生成。
 - 支持文生图、图生图和最多 5 张参考图，可从电脑拖入图片。
 - 画布支持 `Ctrl+V` 直接粘贴剪贴板图片，并自动创建图片节点。
 - 图片编组节点支持拖入多张图片、删除单张图片，并连接 Prompt 批量生成。
@@ -52,7 +53,7 @@ https://provider.example/v1
 
 服务端会自动补充 `/images/generations` 或 `/images/edits`。真实配置保存在 `server/config.json`，该文件包含 API Key，已被 Git 忽略；换电脑后需要重新填写密钥。
 
-内置模型包括 `gpt-image-2`、`grok-imagine-image` 和 `grok-imagine-image-quality`。点击“获取模型”后，返回的模型会按配置档保存；在列表中高亮的模型才会出现在该配置档创建的 Prompt 节点中。
+内置模型包括 `gpt-image-2`、`grok-imagine-image`、`grok-imagine-image-quality`、`gemini-3-pro-image-preview` 和 `gemini-3.1-flash-image-preview`。点击“获取模型”后，返回的模型会按配置档保存；在列表中高亮的模型才会出现在该配置档创建的 Prompt 节点中。
 
 ## 生成与调试
 

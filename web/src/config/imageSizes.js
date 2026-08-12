@@ -1,8 +1,11 @@
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
+export const CUSTOM_IMAGE_RESOLUTION = "custom";
 export const SUPPORTED_IMAGE_MODELS = [
   DEFAULT_IMAGE_MODEL,
   "grok-imagine-image",
-  "grok-imagine-image-quality"
+  "grok-imagine-image-quality",
+  "gemini-3-pro-image-preview",
+  "gemini-3.1-flash-image-preview"
 ];
 
 export const IMAGE_SIZE_CONFIG = {
@@ -51,12 +54,24 @@ function configForModel(model) {
   return IMAGE_SIZE_CONFIG[model] || IMAGE_SIZE_CONFIG[DEFAULT_IMAGE_MODEL];
 }
 
-export function getImageSizeSelection({ model, resolution = "1K", ratio = "1:1" } = {}) {
+function normalizeCustomDimension(value, fallback) {
+  const numeric = Math.round(Number(value));
+  return Number.isFinite(numeric) && numeric > 0 ? Math.min(16384, numeric) : fallback;
+}
+
+function customImageSizeSelection(width, height) {
+  const normalizedWidth = normalizeCustomDimension(width, 1024);
+  const normalizedHeight = normalizeCustomDimension(height, 1024);
+  return { resolution: CUSTOM_IMAGE_RESOLUTION, ratio: CUSTOM_IMAGE_RESOLUTION, width: normalizedWidth, height: normalizedHeight, size: `${normalizedWidth}x${normalizedHeight}` };
+}
+
+export function getImageSizeSelection({ model, resolution = "1K", ratio = "1:1", width, height } = {}) {
+  if (resolution === CUSTOM_IMAGE_RESOLUTION) return customImageSizeSelection(width, height);
   const config = configForModel(model);
   const selectedResolution = config.resolutions.includes(resolution) ? resolution : config.resolutions[0];
   const selectedRatio = config.ratios.includes(ratio) ? ratio : config.ratios[0];
-  const [width, height] = config.sizes[selectedResolution][selectedRatio];
-  return { resolution: selectedResolution, ratio: selectedRatio, width, height, size: `${width}x${height}` };
+  const [resolvedWidth, resolvedHeight] = config.sizes[selectedResolution][selectedRatio];
+  return { resolution: selectedResolution, ratio: selectedRatio, width: resolvedWidth, height: resolvedHeight, size: `${resolvedWidth}x${resolvedHeight}` };
 }
 
 export function getImageSizeOptions(model) {
@@ -64,7 +79,11 @@ export function getImageSizeOptions(model) {
   return { resolutions: config.resolutions, ratios: config.ratios };
 }
 
-export function normalizeImageSizeSelection({ model, resolution, ratio, size } = {}) {
+export function normalizeImageSizeSelection({ model, resolution, ratio, size, width, height } = {}) {
+  if (resolution === CUSTOM_IMAGE_RESOLUTION) {
+    const sizeMatch = String(size || "").match(/^(\d+)x(\d+)$/i);
+    return customImageSizeSelection(width ?? sizeMatch?.[1], height ?? sizeMatch?.[2]);
+  }
   const config = configForModel(model);
   const requestedSize = String(size || "");
   for (const currentResolution of config.resolutions) {
