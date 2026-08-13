@@ -1,6 +1,6 @@
 {
   "name": "ai-canvas",
-  "version": "0.1.0",
+  "version": "1.0.2",
   "description": "Local AI infinite canvas for image generation workflows",
   "private": true,
   "type": "module",

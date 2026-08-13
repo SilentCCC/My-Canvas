@@ -1,5 +1,7 @@
 # AI Canvas
 
+当前版本：`V1.0.2`
+
 本地运行的 AI 无限画布。通过 React Flow 管理 Prompt、图片、图片编组和生成结果，并通过本地 Node.js 服务调用 OpenAI 兼容的图片 API。
 
 ## 当前进度
