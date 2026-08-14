@@ -47,10 +47,53 @@ export const IMAGE_SIZE_CONFIG = {
         "21:9": [3840, 1728]
       }
     }
+  },
+  "grok-imagine-image": {
+    resolutions: ["1K", "2K"],
+    ratios: ["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "9:19.5", "19.5:9", "9:20", "20:9", "1:2", "2:1"],
+    sizes: {
+      "1K": {
+        "1:1": [1024, 1024],
+        "2:3": [1024, 1536],
+        "3:2": [1536, 1024],
+        "3:4": [1024, 1365],
+        "4:3": [1365, 1024],
+        "9:16": [864, 1536],
+        "16:9": [1536, 864],
+        "9:19.5": [709, 1536],
+        "19.5:9": [1536, 709],
+        "9:20": [691, 1536],
+        "20:9": [1536, 691],
+        "1:2": [768, 1536],
+        "2:1": [1536, 768]
+      },
+      "2K": {
+        "1:1": [2048, 2048],
+        "2:3": [2048, 3072],
+        "3:2": [3072, 2048],
+        "3:4": [2048, 2731],
+        "4:3": [2731, 2048],
+        "9:16": [1728, 3072],
+        "16:9": [3072, 1728],
+        "9:19.5": [1418, 3072],
+        "19.5:9": [3072, 1418],
+        "9:20": [1382, 3072],
+        "20:9": [3072, 1382],
+        "1:2": [1536, 3072],
+        "2:1": [3072, 1536]
+      }
+    }
   }
 };
 
+IMAGE_SIZE_CONFIG["grok-imagine-image-quality"] = IMAGE_SIZE_CONFIG["grok-imagine-image"];
+
+function isGrokImageModel(model) {
+  return /(^|\/)grok-imagine-image(?:-quality)?$/i.test(String(model || "").trim());
+}
+
 function configForModel(model) {
+  if (isGrokImageModel(model)) return IMAGE_SIZE_CONFIG["grok-imagine-image"];
   return IMAGE_SIZE_CONFIG[model] || IMAGE_SIZE_CONFIG[DEFAULT_IMAGE_MODEL];
 }
 
@@ -66,7 +109,7 @@ function customImageSizeSelection(width, height) {
 }
 
 export function getImageSizeSelection({ model, resolution = "1K", ratio = "1:1", width, height } = {}) {
-  if (resolution === CUSTOM_IMAGE_RESOLUTION) return customImageSizeSelection(width, height);
+  if (resolution === CUSTOM_IMAGE_RESOLUTION && !isGrokImageModel(model)) return customImageSizeSelection(width, height);
   const config = configForModel(model);
   const selectedResolution = config.resolutions.includes(resolution) ? resolution : config.resolutions[0];
   const selectedRatio = config.ratios.includes(ratio) ? ratio : config.ratios[0];
@@ -80,7 +123,7 @@ export function getImageSizeOptions(model) {
 }
 
 export function normalizeImageSizeSelection({ model, resolution, ratio, size, width, height } = {}) {
-  if (resolution === CUSTOM_IMAGE_RESOLUTION) {
+  if (resolution === CUSTOM_IMAGE_RESOLUTION && !isGrokImageModel(model)) {
     const sizeMatch = String(size || "").match(/^(\d+)x(\d+)$/i);
     return customImageSizeSelection(width ?? sizeMatch?.[1], height ?? sizeMatch?.[2]);
   }

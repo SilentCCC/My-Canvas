@@ -2,6 +2,8 @@
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
+set "CANVAS_PORT=8080"
+for /f %%P in ('node -p "require('./settings.json').port"') do set "CANVAS_PORT=%%P"
 
 where node >nul 2>&1
 if errorlevel 1 (
@@ -36,9 +38,9 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [AI Canvas] Starting local server at http://localhost:6000
+echo [AI Canvas] Starting local server at http://localhost:%CANVAS_PORT%
 start "AI Canvas Server" cmd /k "cd /d %~dp0 && npm run server"
 timeout /t 2 /nobreak >nul
-start "" http://localhost:6000
+start "" http://localhost:%CANVAS_PORT%
 echo [AI Canvas] Browser opened. Close the server window to stop the app.
 endlocal

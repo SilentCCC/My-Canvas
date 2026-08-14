@@ -27,16 +27,17 @@
 ## 当前开发状态
 
 - 当前版本号：
-  - 统一版本：`V1.0.2`
-  - `package.json` / `package-lock.json`：`1.0.2`
-  - README 显示版本：`V1.0.2`
-  - 版本规则：每次修改代码时，必须递增补丁版本号；例如 `V1.0.2` 修改后为 `V1.0.3`。同步更新 `package.json`、`package-lock.json`、README 和本文件。
+  - 统一版本：`V1.0.12`
+  - `package.json` / `package-lock.json`：`1.0.12`
+  - README 显示版本：`V1.0.12`
+  - 版本规则：每次代码功能或行为修改时，必须递增补丁版本号；例如 `V1.0.12` 修改后为 `V1.0.13`。同步更新 `package.json`、`package-lock.json`、README、`CHANGELOG.md` 和本文件。仅补充或修正 `CHANGELOG.md` 时不递增版本号。
 
 ### 已完成的功能
 
 - 本地 Express 服务与 Vite 前端构建。
-- 默认服务端口改为 `6000`。
-- 启动脚本 `start.bat` 支持自动安装依赖、构建并打开 `http://localhost:6000`。
+- 默认服务端口为 `8000`。
+- 根目录 `settings.json` 是端口的唯一配置来源；服务端、Vite API 代理和 `start.bat` 都读取其中的 `port`。
+- 启动脚本 `start.bat` 支持自动安装依赖、构建并打开 `http://localhost:8000`。
 - API 设置页：
   - 多 API 配置档管理。
   - 支持新建、切换、删除配置档。
@@ -64,10 +65,11 @@
   - 生成按钮在已有任务进行时仍可点击，同一个 Prompt 支持并发生成多批图片。
 - 图片尺寸选择：
   - 设置页和 Prompt 节点均使用联动的“分辨率等级 + 比例”选择框。
-  - 支持 `1K`、`2K`、`4K`；比例固定顺序为 `1:1`、`2:3`、`3:2`、`3:4`、`4:3`、`9:16`、`16:9`、`9:21`、`21:9`。
-  - 选择数据保存为 `resolution`、`ratio`、`width`、`height`、`size`，生成 API 只接收最终的 `size`。
-  - 尺寸映射独立维护在 `web/src/config/imageSizes.js`，可扩展给 Flux、Gemini Image 等模型。
-  - Prompt 节点支持“自定义”分辨率，宽高输入范围为 `1` 到 `16384`，请求会发送最终的 `宽x高` 尺寸。
+  - GPT image2 和 Gemini 保持原有尺寸行为，生成 API 发送最终的 `size`。
+  - Grok Imagine 使用独立尺寸配置，只提供官方支持的比例及 `1K`、`2K`，生成 API 发送 `aspect_ratio` 与小写的 `resolution`。
+  - 选择数据保存为 `resolution`、`ratio`、`width`、`height`、`size`；请求信息窗口按模型显示实际发送的尺寸字段。
+  - 尺寸映射独立维护在 `web/src/config/imageSizes.js`。
+  - 非 Grok 模型的 Prompt 节点支持“自定义”分辨率，宽高输入范围为 `1` 到 `16384`，请求会发送最终的 `宽x高` 尺寸。
 - 图片节点：
   - 生成后自动添加到画布。
   - 支持拖动、缩放、打开、下载、删除。
@@ -417,7 +419,7 @@
   - Vite 前端 HTML 入口。
 - `web/vite.config.js`
   - Vite 配置。
-  - 开发代理指向 `http://localhost:6000`。
+  - 开发代理读取根目录 `settings.json`，当前指向 `http://localhost:8000`。
 - `web/src/main.jsx`
   - React 挂载入口。
 - `web/src/App.jsx`
@@ -425,7 +427,7 @@
   - 包含主要 React 状态、节点类型、画布、设置页、历史记录、日志弹窗、图片预览和生成逻辑。
 - `web/src/config/imageSizes.js`
   - 图片模型的尺寸配置模块。
-  - 当前包含 GPT-image-2 的 `1K`、`2K`、`4K` 分辨率和比例映射；新增模型时应在这里扩展配置，而不是把尺寸直接写入组件。
+  - 当前包含 GPT image2 的 `1K`、`2K`、`4K` 映射，以及 Grok Imagine 独立的比例和 `1K`、`2K` 映射；Gemini 继续复用 GPT image2 配置。
 - `web/src/styles.css`
   - 全局 UI 样式、节点样式、设置页、弹窗、响应式布局。
 - `web/dist/`
@@ -463,11 +465,11 @@
     1. `npm.cmd install`
     2. `npm.cmd run build`
     3. `npm.cmd run server`
-    4. 打开 `http://localhost:6000`
+    4. 打开 `http://localhost:8000`
 - 开发模式：
   - 后端：`npm.cmd run server`
   - 前端：`npm.cmd run dev`
-  - Vite 开发端口默认 `5173`，API 代理到 `6000`。
+  - Vite 开发端口默认 `5173`，API 代理读取 `settings.json`，当前目标端口为 `8000`。
 - Git 上传常用命令：
   - `git status`
   - `git add .`
@@ -510,7 +512,7 @@
 以后每完成一个重要功能，请自动更新 `CODEX_CONTEXT.md`：
 
 1. 更新当前版本。
-   - 每次代码修改均递增补丁版本号，例如 `V1.0.1` 到 `V1.0.2`，并同步 `package.json`、`package-lock.json`、README 和本文件。
+   - 每次代码功能或行为修改均递增补丁版本号，例如 `V1.0.1` 到 `V1.0.2`，并同步 `package.json`、`package-lock.json`、README、`CHANGELOG.md` 和本文件；仅补充或修正 `CHANGELOG.md` 时不递增版本号。
 2. 更新已完成列表。
 3. 更新最近修改记录。
 4. 更新下一步计划。

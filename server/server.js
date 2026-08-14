@@ -1,18 +1,31 @@
 import express from "express";
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const configPath = path.join(__dirname, "config.json");
+const settingsPath = path.join(projectRoot, "settings.json");
 const distPath = path.join(projectRoot, "web", "dist");
-const port = Number(process.env.PORT || 6000);
+function configuredPort(value) {
+  const candidate = Number(value);
+  return Number.isInteger(candidate) && candidate > 0 && candidate <= 65535 ? candidate : 8080;
+}
+function readAppSettings() {
+  try { return JSON.parse(readFileSync(settingsPath, "utf8")); } catch { return {}; }
+}
+const port = configuredPort(readAppSettings().port);
 const defaultOutputDir = path.join(projectRoot, "output");
 const legacyDefaultOutputDir = "E:\\Canvas\\output";
 const imageGenerationTimeoutMs = 180_000;
 const verifiedImageResponseOptions = { n: 1 };
 const imageSaveJobs = new Map();
+const GROK_ASPECT_RATIOS = new Set([
+  "1:1", "3:4", "4:3", "9:16", "16:9", "2:3", "3:2",
+  "9:19.5", "19.5:9", "9:20", "20:9", "1:2", "2:1", "auto"
+]);
 
 const defaultProfile = {
   id: "default",
@@ -26,7 +39,7 @@ const defaultProfile = {
   height: 1024,
   size: "1024x1024",
   quality: "high",
-  responseFormat: "b64_json",
+  responseFormat: "url",
   outputDir: defaultOutputDir
 };
 
@@ -47,6 +60,20 @@ function editsUrl(endpoint) {
 function modelsUrl(endpoint) {
   const normalized = cleanEndpoint(endpoint).replace(/\/images\/(generations|edits)$/i, "").replace(/\/models$/i, "");
   return `${normalized}/models`;
+}
+
+function isGrokImageModel(model) {
+  return /(^|\/)grok-imagine-image(?:-quality)?$/i.test(String(model || "").trim());
+}
+
+function grokAspectRatio(ratio) {
+  const value = String(ratio || "").trim();
+  return GROK_ASPECT_RATIOS.has(value) ? value : "auto";
+}
+
+function grokResolution(resolution) {
+  const value = String(resolution || "").trim().toUpperCase();
+  return value === "2K" || value === "4K" ? "2k" : "1k";
 }
 
 function modelIdsFromPayload(payload) {
@@ -167,7 +194,7 @@ function sanitizeProfile(profile, index = 0) {
     height: Number.isFinite(Number(source.height)) ? Number(source.height) : defaultProfile.height,
     size: String(source.size || defaultProfile.size).trim() || defaultProfile.size,
     quality: String(source.quality || defaultProfile.quality).trim() || defaultProfile.quality,
-    responseFormat: source.responseFormat === "url" ? "url" : "b64_json",
+    responseFormat: source.responseFormat === "b64_json" ? "b64_json" : "url",
     outputDir: requestedOutputDir && requestedOutputDir !== legacyDefaultOutputDir ? requestedOutputDir : defaultProfile.outputDir
   };
 }
@@ -461,6 +488,9 @@ app.post("/api/generate", async (req, res) => {
   if (!apiKey) return res.status(400).json({ ok: false, error: "\u8bf7\u5148\u5728 API \u8bbe\u7f6e\u4e2d\u586b\u5199 API Key\u3002" });
   const model = String(req.body?.model || config.model || defaultProfile.model).trim();
   const size = String(req.body?.size || config.size || defaultProfile.size).trim();
+  const ratio = String(req.body?.ratio || config.ratio || defaultProfile.ratio).trim();
+  const resolution = String(req.body?.resolution || config.resolution || defaultProfile.resolution).trim();
+  const grokModel = isGrokImageModel(model);
   const requestedQuality = String(req.body?.quality || config.quality || defaultProfile.quality).trim().toLowerCase();
   const quality = ["low", "medium", "high"].includes(requestedQuality) ? requestedQuality : "";
   const responseFormat = config.responseFormat === "url" ? "url" : "b64_json";
@@ -473,7 +503,12 @@ app.post("/api/generate", async (req, res) => {
       const form = new FormData();
       form.append("model", model);
       form.append("prompt", prompt);
-      form.append("size", size);
+      if (grokModel) {
+        form.append("aspect_ratio", grokAspectRatio(ratio));
+        form.append("resolution", grokResolution(resolution));
+      } else {
+        form.append("size", size);
+      }
       if (quality) form.append("quality", quality);
       form.append("response_format", responseFormat);
       for (const [index, referenceImage] of referenceImages.entries()) {
@@ -481,10 +516,13 @@ app.post("/api/generate", async (req, res) => {
       }
       ({ response, bodyText } = await fetchImageGeneration(editsUrl(config.endpoint), { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form }));
     } else {
+      const requestBody = grokModel
+        ? { model, prompt, aspect_ratio: grokAspectRatio(ratio), resolution: grokResolution(resolution), ...(quality ? { quality } : {}), ...verifiedImageResponseOptions, response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) }
+        : { model, prompt, size, ...(quality ? { quality } : {}), ...verifiedImageResponseOptions, response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) };
       ({ response, bodyText } = await fetchImageGeneration(generationUrl(config.endpoint), {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt, size, ...(quality ? { quality } : {}), ...verifiedImageResponseOptions, response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) })
+        body: JSON.stringify(requestBody)
       }));
     }
     let payload = {};

@@ -1,6 +1,8 @@
 # AI Canvas
 
-当前版本：`V1.0.2`
+当前版本：`V1.0.12`
+
+更新记录请查看 [CHANGELOG.md](CHANGELOG.md)。
 
 本地运行的 AI 无限画布。通过 React Flow 管理 Prompt、图片、图片编组和生成结果，并通过本地 Node.js 服务调用 OpenAI 兼容的图片 API。
 
@@ -21,6 +23,9 @@
 - 顶部日志按钮显示每次生成的 Prompt、状态和原始响应文本；失败、超时、HTTP 错误和非 JSON 响应也会显示。
 - API Key 只保存在本地服务端配置中，输入框支持眼睛图标切换显示和隐藏。
 - API 设置支持获取端点模型列表；模型按钮可单击高亮，Prompt 节点只显示当前配置档已高亮的模型。
+- Grok Imagine 使用独立尺寸协议：请求发送 `aspect_ratio` 和 `resolution`，并限制为 Grok 支持的比例及 `1K`、`2K`；GPT image2 与 Gemini 继续发送原有 `size`。
+- 历史记录支持带确认的单条删除，删除后立即释放该条浏览器存储占用；不会删除输出目录中的图片文件。
+- API 设置页支持清除浏览器缓存记录；只清除画布和历史记录，保留已获取/高亮模型、服务端 Endpoint、API Key 和配置档。
 
 ## 启动
 
@@ -34,20 +39,22 @@ npm.cmd run build
 npm.cmd run server
 ```
 
-然后打开 <http://localhost:6000>。
+然后打开 <http://localhost:8000>。
+
+默认端口保存在根目录的 `settings.json`。修改其中的 `port` 后重启服务；`start.bat`、服务端和 Vite 开发代理会自动使用该端口。
 
 开发模式可以分别运行：
 
 ```bash
 npm.cmd run dev     # Vite 开发服务器，默认 5173
-npm.cmd run server  # API 服务，默认 6000
+npm.cmd run server  # API 服务，当前由 settings.json 配置为 8000
 ```
 
 ## API 配置
 
 在设置页选择或新建 API 配置档，填写 Endpoint、API Key、模型、尺寸和质量后保存。Endpoint 填写服务商的 API 根地址，例如：
 
-每个 API 配置档还可以选择响应格式：`URL` 或 `Base64`，默认使用 `Base64`。该选择同时应用于文生图和图生图请求。
+每个 API 配置档还可以选择响应格式：`URL` 或 `Base64`，默认使用 `URL`。该选择同时应用于文生图和图生图请求。
 
 ```text
 https://provider.example/v1
