@@ -1,5 +1,6 @@
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 export const CUSTOM_IMAGE_RESOLUTION = "custom";
+export const AUTO_IMAGE_RESOLUTION = "auto";
 export const SUPPORTED_IMAGE_MODELS = [
   DEFAULT_IMAGE_MODEL,
   "grok-imagine-image",
@@ -10,7 +11,7 @@ export const SUPPORTED_IMAGE_MODELS = [
 
 export const IMAGE_SIZE_CONFIG = {
   [DEFAULT_IMAGE_MODEL]: {
-    resolutions: ["1K", "2K", "4K"],
+    resolutions: [AUTO_IMAGE_RESOLUTION, "1K", "2K", "4K"],
     ratios: ["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "9:21", "21:9"],
     sizes: {
       "1K": {
@@ -49,7 +50,7 @@ export const IMAGE_SIZE_CONFIG = {
     }
   },
   "grok-imagine-image": {
-    resolutions: ["1K", "2K"],
+    resolutions: [AUTO_IMAGE_RESOLUTION, "1K", "2K"],
     ratios: ["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9", "9:19.5", "19.5:9", "9:20", "20:9", "1:2", "2:1"],
     sizes: {
       "1K": {
@@ -108,9 +109,18 @@ function customImageSizeSelection(width, height) {
   return { resolution: CUSTOM_IMAGE_RESOLUTION, ratio: CUSTOM_IMAGE_RESOLUTION, width: normalizedWidth, height: normalizedHeight, size: `${normalizedWidth}x${normalizedHeight}` };
 }
 
+function autoImageSizeSelection(model, ratio) {
+  const config = configForModel(model);
+  if (isGrokImageModel(model)) return { resolution: AUTO_IMAGE_RESOLUTION, ratio: AUTO_IMAGE_RESOLUTION, width: 1024, height: 1024, size: AUTO_IMAGE_RESOLUTION };
+  const selectedRatio = config.ratios.includes(ratio) ? ratio : config.ratios[0];
+  const [width, height] = config.sizes[config.resolutions.find((resolution) => resolution !== AUTO_IMAGE_RESOLUTION) || config.resolutions[0]][selectedRatio];
+  return { resolution: AUTO_IMAGE_RESOLUTION, ratio: selectedRatio, width, height, size: AUTO_IMAGE_RESOLUTION };
+}
+
 export function getImageSizeSelection({ model, resolution = "1K", ratio = "1:1", width, height } = {}) {
   if (resolution === CUSTOM_IMAGE_RESOLUTION && !isGrokImageModel(model)) return customImageSizeSelection(width, height);
   const config = configForModel(model);
+  if (resolution === AUTO_IMAGE_RESOLUTION) return autoImageSizeSelection(model, ratio);
   const selectedResolution = config.resolutions.includes(resolution) ? resolution : config.resolutions[0];
   const selectedRatio = config.ratios.includes(ratio) ? ratio : config.ratios[0];
   const [resolvedWidth, resolvedHeight] = config.sizes[selectedResolution][selectedRatio];
@@ -129,7 +139,9 @@ export function normalizeImageSizeSelection({ model, resolution, ratio, size, wi
   }
   const config = configForModel(model);
   const requestedSize = String(size || "");
+  if (requestedSize.toLowerCase() === AUTO_IMAGE_RESOLUTION) return autoImageSizeSelection(model, ratio);
   for (const currentResolution of config.resolutions) {
+    if (currentResolution === AUTO_IMAGE_RESOLUTION) continue;
     for (const currentRatio of config.ratios) {
       const [width, height] = config.sizes[currentResolution][currentRatio];
       if (requestedSize === `${width}x${height}`) return getImageSizeSelection({ model, resolution: currentResolution, ratio: currentRatio });

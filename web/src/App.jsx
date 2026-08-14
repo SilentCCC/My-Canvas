@@ -1,5 +1,5 @@
 import { Component, Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CUSTOM_IMAGE_RESOLUTION, DEFAULT_IMAGE_MODEL, formatImageRatioOption, getImageSizeOptions, getImageSizeSelection, normalizeImageSizeSelection, SUPPORTED_IMAGE_MODELS } from "./config/imageSizes";
+import { AUTO_IMAGE_RESOLUTION, CUSTOM_IMAGE_RESOLUTION, DEFAULT_IMAGE_MODEL, formatImageRatioOption, getImageSizeOptions, getImageSizeSelection, normalizeImageSizeSelection, SUPPORTED_IMAGE_MODELS } from "./config/imageSizes";
 import {
   AlertCircle,
   Check,
@@ -88,6 +88,8 @@ const cn = {
   requestProfile: "\u914d\u7f6e\u6863\uff1a",
   requestReferenceCount: "\u53c2\u8003\u56fe\u6570\uff1a",
   requestResponseFormat: "\u8fd4\u56de\u683c\u5f0f\uff1a",
+  requestCount: "\u8bf7\u6c42\u6570\u91cf",
+  requestNotSent: "\u672a\u53d1\u9001",
   noReferenceImage: "\u65e0",
   responseInfo: "\u8fd4\u56de\u4fe1\u606f\uff1a",
   rawResponseInfo: "\u539f\u59cb\u54cd\u5e94\uff1a",
@@ -273,8 +275,6 @@ function loadCanvasState() {
   try {
     const saved = JSON.parse(localStorage.getItem(CANVASES_KEY) || "null");
     if (saved?.canvases?.length) return restoreInterruptedGenerationState(saved);
-    const legacy = JSON.parse(localStorage.getItem("ai-canvas-workflow-v1") || "null");
-    if (legacy?.nodes) return restoreInterruptedGenerationState({ activeId: "canvas-1", canvases: [{ id: "canvas-1", name: "\u672a\u547d\u540d\u753b\u5e03", nodes: legacy.nodes, edges: legacy.edges || [] }] });
   } catch {
     // Ignore malformed local workspace data and start with a clean canvas.
   }
@@ -357,6 +357,7 @@ function PromptNode({ id, data, selected }) {
   const sizeSelection = normalizeImageSizeSelection({ ...data, model: activeModel || DEFAULT_IMAGE_MODEL });
   const sizeOptions = getImageSizeOptions(activeModel || DEFAULT_IMAGE_MODEL);
   const isCustomSize = sizeSelection.resolution === CUSTOM_IMAGE_RESOLUTION;
+  const isAutoSize = sizeSelection.resolution === AUTO_IMAGE_RESOLUTION;
   const updateCustomDimension = (dimension, value) => {
     const numeric = Number(value);
     if (!Number.isFinite(numeric) || numeric <= 0) return;
@@ -401,27 +402,46 @@ function PromptNode({ id, data, selected }) {
           <span className="reference-image-hint">{cn.referenceImageLimit}</span>
         </div>
         <div className="node-parameters">
-          <select className="node-select node-profile nodrag" value={data.profileId || data.activeProfileId || data.profiles?.[0]?.id || ""} onChange={(event) => data.onParamChange?.(id, "profileId", event.target.value)} aria-label={cn.nodeProfile} title={cn.nodeProfile}>
-            {(data.profiles || []).map((profile, index) => <option value={profile.id} key={profile.id}>{profile.name || `API ${index + 1}`}</option>)}
-          </select>
-          <select className="node-select node-model nodrag" value={activeModel} onChange={(event) => data.onParamChange?.(id, "model", event.target.value)} aria-label={cn.nodeModel} disabled={!modelOptions.length}>
-            {modelOptions.length ? modelOptions.map((model) => <option key={model} value={model}>{model}</option>) : <option value="">未选择模型</option>}
-          </select>
-          <div className="node-size-controls">
+          <div className="node-parameter-field">
+            <span className="node-parameter-label">API</span>
+            <select className="node-select node-profile nodrag" value={data.profileId || data.activeProfileId || data.profiles?.[0]?.id || ""} onChange={(event) => data.onParamChange?.(id, "profileId", event.target.value)} aria-label={cn.nodeProfile} title={cn.nodeProfile}>
+              {(data.profiles || []).map((profile, index) => <option value={profile.id} key={profile.id}>{profile.name || `API ${index + 1}`}</option>)}
+            </select>
+          </div>
+          <div className="node-parameter-field node-model-field">
+            <span className="node-parameter-label">模型</span>
+            <select className="node-select node-model nodrag" value={activeModel} onChange={(event) => data.onParamChange?.(id, "model", event.target.value)} aria-label={cn.nodeModel} disabled={!modelOptions.length}>
+              {modelOptions.length ? modelOptions.map((model) => <option key={model} value={model}>{model}</option>) : <option value="">未选择模型</option>}
+            </select>
+          </div>
+          <div className="node-parameter-field">
+            <span className="node-parameter-label">尺寸</span>
             <select className="node-select nodrag" value={sizeSelection.resolution} onChange={(event) => data.onSizeChange?.(id, getImageSizeSelection({ model: activeModel || DEFAULT_IMAGE_MODEL, resolution: event.target.value, ratio: sizeSelection.ratio }))} aria-label="分辨率等级">
               {sizeOptions.resolutions.map((resolution) => <option key={resolution} value={resolution}>{resolution}</option>)}
               {!isGrokImageModel(activeModel) && <option value={CUSTOM_IMAGE_RESOLUTION}>{cn.custom}</option>}
             </select>
+          </div>
+          {!isAutoSize && <div className="node-parameter-field">
+            <span className="node-parameter-label">比例</span>
             {isCustomSize ? <div className="custom-size-inputs"><input className="node-select nodrag" type="number" min="1" max="16384" step="1" value={sizeSelection.width} onChange={(event) => updateCustomDimension("width", event.target.value)} aria-label="自定义宽度" /><span>×</span><input className="node-select nodrag" type="number" min="1" max="16384" step="1" value={sizeSelection.height} onChange={(event) => updateCustomDimension("height", event.target.value)} aria-label="自定义高度" /></div> : <select className="node-select nodrag" value={sizeSelection.ratio} onChange={(event) => data.onSizeChange?.(id, getImageSizeSelection({ model: activeModel || DEFAULT_IMAGE_MODEL, resolution: sizeSelection.resolution, ratio: event.target.value }))} aria-label={cn.nodeSize}>
               {sizeOptions.ratios.map((ratio) => <option key={ratio} value={ratio}>{formatImageRatioOption(getImageSizeSelection({ model: activeModel || DEFAULT_IMAGE_MODEL, resolution: sizeSelection.resolution, ratio }))}</option>)}
             </select>}
+          </div>}
+          <div className="node-parameter-field">
+            <span className="node-parameter-label">质量</span>
+            <select className="node-select nodrag" value={data.quality || "high"} onChange={(event) => data.onParamChange?.(id, "quality", event.target.value)} aria-label={cn.nodeQuality}>
+              <option value="high">{cn.high}</option>
+              <option value="medium">{cn.medium}</option>
+              <option value="low">{cn.low}</option>
+              <option value="auto">{cn.auto}</option>
+            </select>
           </div>
-          <select className="node-select nodrag" value={data.quality || "high"} onChange={(event) => data.onParamChange?.(id, "quality", event.target.value)} aria-label={cn.nodeQuality}>
-            <option value="high">{cn.high}</option>
-            <option value="medium">{cn.medium}</option>
-            <option value="low">{cn.low}</option>
-            <option value="auto">{cn.auto}</option>
-          </select>
+          <div className="node-parameter-field">
+            <span className="node-parameter-label">请求数量</span>
+            <select className="node-select nodrag" value={Math.max(1, Math.min(5, Number(data.requestCount) || 1))} onChange={(event) => data.onParamChange?.(id, "requestCount", Number(event.target.value))} aria-label={cn.requestCount}>
+              {[1, 2, 3, 4, 5].map((count) => <option key={count} value={count}>{count} 张</option>)}
+            </select>
+          </div>
         </div>
         <div className="prompt-footer">
           <span className="prompt-hint">{(data.prompt || "").length}/4000</span>
@@ -512,8 +532,9 @@ function ImageNode({ id, data, selected }) {
           <div className="image-info-tooltip image-request-tooltip" role="tooltip">
             <div className="image-info-heading">{cn.requestInfo}</div>
             <div><span>{cn.imagePrompt}</span><strong>{requestPrompt}</strong></div>
-            <div><span>{cn.modelInfo}</span><strong>{data.model || cn.infoUnavailable}</strong></div>
-            {isGrokImageModel(data.model) ? <><div><span>aspect_ratio</span><strong>{data.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{data.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{data.size || cn.infoUnavailable}</strong></div>}
+        <div><span>{cn.modelInfo}</span><strong>{data.model || cn.infoUnavailable}</strong></div>
+            <div><span>{cn.requestCount}</span><strong>{Math.max(1, Math.min(5, Number(data.requestCount) || 1))}</strong></div>
+            {isGrokImageModel(data.model) ? <><div><span>aspect_ratio</span><strong>{data.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{data.ratio === "auto" ? cn.requestNotSent : data.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{data.size || cn.infoUnavailable}</strong></div>}
             <div><span>{cn.qualityInfo}</span><strong>{data.quality || cn.infoUnavailable}</strong></div>
             <div><span>{cn.requestProfile}</span><strong>{requestProfile}</strong></div>
             <div><span>{cn.requestReferenceCount}</span><strong>{referenceImageCount ? `${referenceImageCount}` : cn.noReferenceImage}</strong></div>
@@ -627,7 +648,7 @@ function Sidebar({ activePanel, setActivePanel, collapsed, setCollapsed, canvase
         </button>
         {!collapsed && <div className="canvas-list">{canvases.map((canvas) => <div key={canvas.id} className={`canvas-list-item ${canvas.id === activeCanvasId ? "is-active" : ""}`}><button className="canvas-select-button" onClick={() => onSelectCanvas(canvas.id)} title={canvas.name}><Layers3 size={14} /><span>{canvas.name}</span></button><button className="canvas-rename-button" onClick={(event) => { event.stopPropagation(); onRenameCanvas(canvas.id); }} aria-label={cn.renameCanvas} title={cn.renameCanvas}><Pencil size={13} /></button>{canvases.length > 1 && <button className="canvas-delete-button" onClick={(event) => { event.stopPropagation(); onDeleteCanvas(canvas.id); }} aria-label={cn.deleteCanvas} title={cn.deleteCanvas}><Trash2 size={13} /></button>}</div>)}</div>}
       </div>
-      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.0.12</span></div>}
+      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.0.23</span></div>}
     </aside>
   );
 }
@@ -760,6 +781,7 @@ function SettingsView({ config, apiKeyDraft, setApiKeyDraft, onChange, onSizeCha
   const [showApiKey, setShowApiKey] = useState(false);
   const sizeSelection = normalizeImageSizeSelection(config);
   const sizeOptions = getImageSizeOptions(config.model);
+  const isAutoSize = sizeSelection.resolution === AUTO_IMAGE_RESOLUTION;
   const toggleApiKeyVisibility = async () => {
     if (showApiKey) return setShowApiKey(false);
     if (!apiKeyDraft && config.hasApiKey && !await onRevealApiKey?.()) return;
@@ -792,7 +814,7 @@ function SettingsView({ config, apiKeyDraft, setApiKeyDraft, onChange, onSizeCha
 
           <div className="field-grid model-size-grid">
             <div><div className="model-field-heading"><label className="field-label" htmlFor="model">{cn.model}</label><button className="toolbar-button model-fetch-button" onClick={onFetchModels} disabled={modelFetchState === "loading"}>{modelFetchState === "loading" ? <Loader2 size={14} className="spin" /> : <RefreshCw size={14} />}<span>{modelFetchState === "loading" ? cn.fetchingModels : cn.fetchModels}</span></button></div><input id="model" list="image-model-options" value={config.model} onChange={(event) => onChange("model", event.target.value)} placeholder="gpt-image-2" />{modelFetchState === "success" && <div className="model-fetch-results"><span>{cn.modelsFetched}</span><div>{fetchedModels.map((model) => <button type="button" key={model} className={selectedModels.includes(model) ? "is-selected" : ""} aria-pressed={selectedModels.includes(model)} onClick={() => onToggleFetchedModel(model)}>{model}</button>)}</div></div>}{modelFetchState === "empty" && <p className="model-fetch-empty">{cn.modelsEmpty}</p>}{modelFetchState === "error" && <p className="model-fetch-error">{modelFetchError || cn.modelsFetchFailed}</p>}</div>
-            <div><label className="field-label" htmlFor="image-resolution">{cn.size}</label><div className="size-selection-controls"><select id="image-resolution" value={sizeSelection.resolution} onChange={(event) => onSizeChange(getImageSizeSelection({ model: config.model, resolution: event.target.value, ratio: sizeSelection.ratio }))} aria-label="分辨率等级">{sizeOptions.resolutions.map((resolution) => <option key={resolution} value={resolution}>{resolution}</option>)}</select><select value={sizeSelection.ratio} onChange={(event) => onSizeChange(getImageSizeSelection({ model: config.model, resolution: sizeSelection.resolution, ratio: event.target.value }))} aria-label={cn.size}>{sizeOptions.ratios.map((ratio) => <option key={ratio} value={ratio}>{formatImageRatioOption(getImageSizeSelection({ model: config.model, resolution: sizeSelection.resolution, ratio }))}</option>)}</select></div></div>
+            <div><label className="field-label" htmlFor="image-resolution">{cn.size}</label><div className="size-selection-controls"><select id="image-resolution" value={sizeSelection.resolution} onChange={(event) => onSizeChange(getImageSizeSelection({ model: config.model, resolution: event.target.value, ratio: sizeSelection.ratio }))} aria-label="分辨率等级">{sizeOptions.resolutions.map((resolution) => <option key={resolution} value={resolution}>{resolution}</option>)}</select>{!isAutoSize && <select value={sizeSelection.ratio} onChange={(event) => onSizeChange(getImageSizeSelection({ model: config.model, resolution: sizeSelection.resolution, ratio: event.target.value }))} aria-label={cn.size}>{sizeOptions.ratios.map((ratio) => <option key={ratio} value={ratio}>{formatImageRatioOption(getImageSizeSelection({ model: config.model, resolution: sizeSelection.resolution, ratio }))}</option>)}</select>}</div></div>
           </div>
           <label className="field-label" htmlFor="quality">{cn.quality}</label>
           <select id="quality" value={config.quality} onChange={(event) => onChange("quality", event.target.value)}><option value="high">{cn.high}</option><option value="medium">{cn.medium}</option><option value="low">{cn.low}</option><option value="auto">{cn.auto}</option></select>
@@ -839,7 +861,8 @@ function HistoryInfoButtons({ item }) {
         <div className="image-info-heading">{cn.requestInfo}</div>
         <div><span>{cn.imagePrompt}</span><strong>{requestPrompt}</strong></div>
         <div><span>{cn.modelInfo}</span><strong>{item.model || cn.infoUnavailable}</strong></div>
-        {isGrokImageModel(item.model) ? <><div><span>aspect_ratio</span><strong>{item.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{item.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{item.size || cn.infoUnavailable}</strong></div>}
+        <div><span>{cn.requestCount}</span><strong>{Math.max(1, Math.min(5, Number(item.requestCount) || 1))}</strong></div>
+        {isGrokImageModel(item.model) ? <><div><span>aspect_ratio</span><strong>{item.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{item.ratio === "auto" ? cn.requestNotSent : item.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{item.size || cn.infoUnavailable}</strong></div>}
         <div><span>{cn.qualityInfo}</span><strong>{item.quality || cn.infoUnavailable}</strong></div>
         <div><span>{cn.requestProfile}</span><strong>{requestProfile}</strong></div>
         <div><span>{cn.requestReferenceCount}</span><strong>{referenceImageCount ? `${referenceImageCount}` : cn.noReferenceImage}</strong></div>
@@ -1136,12 +1159,13 @@ function AppShell() {
       const sizeSelection = normalizeImageSizeSelection({ model, resolution: source.data.resolution || config.resolution, ratio: source.data.ratio || config.ratio, size: source.data.size || config.size, width: source.data.width || config.width, height: source.data.height || config.height });
       const size = sizeSelection.size;
       const quality = String(source.data.quality || config.quality).trim();
+      const requestCount = Math.max(1, Math.min(5, Number(source.data.requestCount) || 1));
       const directReferences = Array.isArray(source.data.referenceImages) ? source.data.referenceImages : (source.data.referenceImage ? [source.data.referenceImage] : []);
       const groupedImages = edges.filter((edge) => edge.target === id).flatMap((edge) => {
         const group = nodes.find((node) => node.id === edge.source && node.type === "imageGroup");
         return Array.isArray(group?.data?.images) ? group.data.images : [];
       });
-      const tasks = groupedImages.length ? groupedImages.map((image) => [image]) : [directReferences];
+      const tasks = groupedImages.length ? groupedImages.map((image) => [image]) : Array.from({ length: requestCount }, () => directReferences);
       const createdAt = new Date().toISOString();
       const generationBatchId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const sourceWidth = Number(source.width || source.measured?.width || source.style?.width || 580);
@@ -1157,7 +1181,7 @@ function AppShell() {
       const requestProfile = (config.profiles || []).find((profile) => profile.id === requestProfileId);
       const outputNodes = tasks.map((referenceImages, index) => {
         const imageId = `image-${generationBatchId}-${index}`;
-        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80, y: outputStartY + index * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", comparisonSource: referenceImages[0] || "", prompt, title: prompt, model, quality, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: referenceImages.length, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
+        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80, y: outputStartY + index * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", comparisonSource: referenceImages[0] || "", prompt, title: prompt, model, quality, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: referenceImages.length, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
       });
       outputNodeIds = outputNodes.map((node) => node.id);
       setNodes((current) => [...current, ...outputNodes]);
@@ -1192,7 +1216,7 @@ function AppShell() {
       const successful = results.filter((entry) => entry.result);
       results.forEach((entry, index) => {
         if (!entry.result) return;
-        appendHistory({ id: outputNodeIds[index], src: "", sourceImageUrl: entry.result.sourceImageUrl || "", prompt, model, quality, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: tasks[index]?.length || 0, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, savedPath: "", fileSize: 0, apiRequestDurationMs: entry.result.apiRequestDurationMs, imageDownloadDurationMs: undefined, localWriteDurationMs: undefined, generationDurationMs: entry.generationDurationMs || 0, saveStatus: entry.result.saveStatus || "pending", status: "success", responseText: entry.result.responseText || entry.responseText || "", rawResponseText: entry.result.rawResponseText || entry.rawResponseText || "" });
+        appendHistory({ id: outputNodeIds[index], src: "", sourceImageUrl: entry.result.sourceImageUrl || "", prompt, model, quality, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: tasks[index]?.length || 0, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, savedPath: "", fileSize: 0, apiRequestDurationMs: entry.result.apiRequestDurationMs, imageDownloadDurationMs: undefined, localWriteDurationMs: undefined, generationDurationMs: entry.generationDurationMs || 0, saveStatus: entry.result.saveStatus || "pending", status: "success", responseText: entry.result.responseText || entry.responseText || "", rawResponseText: entry.result.rawResponseText || entry.rawResponseText || "" });
         if (entry.result.saveJobId) window.setTimeout(() => pollImageSave(entry.result.saveJobId, entry.result.sourceImageUrl || entry.result.imageUrl, outputNodeIds[index], outputNodeIds[index], Date.now() - (entry.generationDurationMs || 0)), 0);
       });
       setNodes((current) => current.map((node) => {
@@ -1217,7 +1241,7 @@ function AppShell() {
     const modelOptions = getProfileModelOptions(config.activeProfileId);
     const model = modelOptions.includes(config.model) ? config.model : (modelOptions[0] || "");
     const sizeSelection = normalizeImageSizeSelection({ ...config, model });
-    setNodes((current) => [...current, { id, type: "prompt", position, style: { width: 580, height: 580 }, data: { prompt: "", referenceImages: [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } }]);
+    setNodes((current) => [...current, { id, type: "prompt", position, style: { width: 580, height: 580 }, data: { prompt: "", referenceImages: [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, requestCount: 1, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } }]);
     setActivePanel("canvas");
   }, [config, getProfileModelOptions, setNodes, stableDelete, stableGenerate, stableParamChange, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableSizeChange]);
 
@@ -1243,7 +1267,7 @@ function AppShell() {
     const model = modelOptions.includes(sourceModel) ? sourceModel : (modelOptions[0] || "");
     const sizeSelection = normalizeImageSizeSelection({ model, resolution: sourceNode.data.resolution || config.resolution, ratio: sourceNode.data.ratio || config.ratio, size: sourceNode.data.size || config.size, width: sourceNode.data.width || config.width, height: sourceNode.data.height || config.height });
     const sourceHeight = Number(sourceNode.height || sourceNode.measured?.height || sourceNode.style?.height || (isImage ? 390 : 460));
-    const promptNode = { id, type: "prompt", position: { x: sourceNode.position.x, y: sourceNode.position.y + sourceHeight + 60 }, style: { width: 580, height: 580 }, data: { sourceNodeId: sourceId, sourceImageId: isImage ? sourceId : "", prompt: "", referenceImages: isImage && sourceNode.data.src ? [sourceNode.data.src] : [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } };
+    const promptNode = { id, type: "prompt", position: { x: sourceNode.position.x, y: sourceNode.position.y + sourceHeight + 60 }, style: { width: 580, height: 580 }, data: { sourceNodeId: sourceId, sourceImageId: isImage ? sourceId : "", prompt: "", referenceImages: isImage && sourceNode.data.src ? [sourceNode.data.src] : [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, requestCount: 1, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } };
     setNodes((current) => [...current, promptNode]);
     setEdges((current) => current.some((edge) => edge.source === sourceId && edge.target === id) ? current : [...current, { id: `edge-${sourceId}-${id}`, source: sourceId, target: id, animated: true, style: { stroke: isImage ? "#7dc7b9" : "#86a9e9", strokeWidth: 1.5 } }]);
   }, [config, getProfileModelOptions, nodes, setEdges, setNodes, stableDelete, stableGenerate, stableParamChange, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableSizeChange]);

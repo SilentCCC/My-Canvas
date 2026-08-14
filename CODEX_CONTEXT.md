@@ -27,10 +27,10 @@
 ## 当前开发状态
 
 - 当前版本号：
-  - 统一版本：`V1.0.12`
-  - `package.json` / `package-lock.json`：`1.0.12`
-  - README 显示版本：`V1.0.12`
-  - 版本规则：每次代码功能或行为修改时，必须递增补丁版本号；例如 `V1.0.12` 修改后为 `V1.0.13`。同步更新 `package.json`、`package-lock.json`、README、`CHANGELOG.md` 和本文件。仅补充或修正 `CHANGELOG.md` 时不递增版本号。
+  - 统一版本：`V1.0.23`
+  - `package.json` / `package-lock.json`：`1.0.23`
+  - README 显示版本：`V1.0.23`
+  - 版本规则：每次代码功能或行为修改时，必须递增补丁版本号；例如 `V1.0.23` 修改后为 `V1.0.24`。同步更新 `package.json`、`package-lock.json`、README、`CHANGELOG.md` 和本文件。仅补充或修正 `CHANGELOG.md` 时不递增版本号。
 
 ### 已完成的功能
 
@@ -65,6 +65,7 @@
   - 生成按钮在已有任务进行时仍可点击，同一个 Prompt 支持并发生成多批图片。
 - 图片尺寸选择：
   - 设置页和 Prompt 节点均使用联动的“分辨率等级 + 比例”选择框。
+  - image2 和 Gemini 的尺寸菜单顺序为 `auto`、`1K`、`2K`、`4K`；Grok 菜单为 `auto`、`1K`、`2K`。选择 `auto` 后隐藏比例/具体尺寸选择框；image2/Gemini 发送 `size: "auto"`，Grok 发送 `aspect_ratio: "auto"` 且不发送 `resolution`。
   - GPT image2 和 Gemini 保持原有尺寸行为，生成 API 发送最终的 `size`。
   - Grok Imagine 使用独立尺寸配置，只提供官方支持的比例及 `1K`、`2K`，生成 API 发送 `aspect_ratio` 与小写的 `resolution`。
   - 选择数据保存为 `resolution`、`ratio`、`width`、`height`、`size`；请求信息窗口按模型显示实际发送的尺寸字段。

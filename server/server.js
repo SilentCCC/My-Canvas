@@ -76,6 +76,11 @@ function grokResolution(resolution) {
   return value === "2K" || value === "4K" ? "2k" : "1k";
 }
 
+function grokRequestSizeFields(ratio, resolution) {
+  const aspectRatio = grokAspectRatio(ratio);
+  return { aspect_ratio: aspectRatio, ...(aspectRatio === "auto" ? {} : { resolution: grokResolution(resolution) }) };
+}
+
 function modelIdsFromPayload(payload) {
   const entries = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload?.models) ? payload.models : Array.isArray(payload) ? payload : [];
   return [...new Set(entries.map((entry) => typeof entry === "string" ? entry : entry?.id || entry?.name || entry?.model).map((model) => String(model || "").trim()).filter(Boolean))];
@@ -504,8 +509,7 @@ app.post("/api/generate", async (req, res) => {
       form.append("model", model);
       form.append("prompt", prompt);
       if (grokModel) {
-        form.append("aspect_ratio", grokAspectRatio(ratio));
-        form.append("resolution", grokResolution(resolution));
+        for (const [field, value] of Object.entries(grokRequestSizeFields(ratio, resolution))) form.append(field, value);
       } else {
         form.append("size", size);
       }
@@ -517,7 +521,7 @@ app.post("/api/generate", async (req, res) => {
       ({ response, bodyText } = await fetchImageGeneration(editsUrl(config.endpoint), { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form }));
     } else {
       const requestBody = grokModel
-        ? { model, prompt, aspect_ratio: grokAspectRatio(ratio), resolution: grokResolution(resolution), ...(quality ? { quality } : {}), ...verifiedImageResponseOptions, response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) }
+        ? { model, prompt, ...grokRequestSizeFields(ratio, resolution), ...(quality ? { quality } : {}), ...verifiedImageResponseOptions, response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) }
         : { model, prompt, size, ...(quality ? { quality } : {}), ...verifiedImageResponseOptions, response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) };
       ({ response, bodyText } = await fetchImageGeneration(generationUrl(config.endpoint), {
         method: "POST",
