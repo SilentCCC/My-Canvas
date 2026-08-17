@@ -1,6 +1,6 @@
 # AI Canvas
 
-当前版本：`V1.0.23`
+当前版本：`V1.0.34`
 
 更新记录请查看 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -10,9 +10,12 @@
 
 - 无限画布支持平移、滚轮缩放、节点拖动、连线、删除和多画布管理。
 - Prompt 节点支持选择 API 配置档、模型、质量和联动尺寸。
-- 图片尺寸支持 `auto`、`1K`、`2K`、`4K`，选择 `auto` 时隐藏后续比例/具体尺寸选择框；image2/Gemini 按 `size: "auto"` 请求，Grok 按 `aspect_ratio: "auto"` 请求且不发送 `resolution`。
+- 图片尺寸支持 `auto`、`1K`、`2K`、`4K`，image2 的固定尺寸遵循 GPT Image 2 的 16 像素倍数、最大边长和总像素约束；选择 `auto` 时隐藏后续比例/具体尺寸选择框。image2/Gemini 按 `size: "auto"` 请求，Grok 按 `aspect_ratio: "auto"` 请求且不发送 `resolution`。
 - Prompt 节点尺寸菜单支持“自定义”，可直接填写宽度和高度并按自定义分辨率生成。
 - 支持文生图、图生图和最多 5 张参考图，可从电脑拖入图片。
+- 设置页支持配置图片下载代理；默认关闭，选择“开”后填写 Clash Verge 端口（如 `7890`）或完整 HTTP/HTTPS/SOCKS 代理地址，服务端下载第三方图片 URL 会通过该代理。
+- 浏览器使用的 Clash Verge 系统代理不会自动传递给 Node.js 或 `curl`；如果浏览器能打开第三方图片而画布下载超时，请在设置页将图片下载代理设为“开”并填写 Clash Verge 的本地端口。
+- 生成图片节点右下角支持直接打开第三方返回的原始 URL。
 - 画布支持 `Ctrl+V` 直接粘贴剪贴板图片，并自动创建图片节点。
 - 图片编组节点支持拖入多张图片、删除单张图片，并连接 Prompt 批量生成。
 - 同一个 Prompt 在已有图片生成任务进行时仍可再次点击生成，支持并发生成多张结果。
@@ -64,6 +67,8 @@ https://provider.example/v1
 ```
 
 服务端会自动补充 `/images/generations` 或 `/images/edits`。真实配置保存在 `server/config.json`，该文件包含 API Key，已被 Git 忽略；换电脑后需要重新填写密钥。
+
+图片下载代理保存在根目录 `settings.json`。关闭代理时服务端直连；开启代理后，服务端保存图片和远程图片预览会通过填写的代理。点击生成图片节点右下角的“打开 URL”时由浏览器直接访问原始地址，仍使用浏览器自身的代理设置。
 
 内置模型包括 `gpt-image-2`、`grok-imagine-image`、`grok-imagine-image-quality`、`gemini-3-pro-image-preview` 和 `gemini-3.1-flash-image-preview`。点击“获取模型”后，返回的模型会按配置档保存；在列表中高亮的模型才会出现在该配置档创建的 Prompt 节点中。
 

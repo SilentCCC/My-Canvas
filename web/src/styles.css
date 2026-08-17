@@ -186,6 +186,8 @@ button { color: inherit; }
 .canvas-error-detail { max-width: min(620px, calc(100vw - 120px)); max-height: 160px; margin: 8px 0 0; overflow: auto; color: var(--muted); font: 10px/1.45 Consolas, "Courier New", monospace; white-space: pre-wrap; word-break: break-word; }
 .image-wait-time { position: absolute; top: 8px; right: 8px; z-index: 1; display: inline-flex; align-items: center; gap: 4px; padding: 4px 6px; border: 1px solid rgba(242,184,102,.4); border-radius: 5px; color: var(--accent); background: rgba(12,15,21,.82); font: 10px/1 Consolas, "Courier New", monospace; }
 .image-overlay { position: absolute; left: 40px; right: 40px; bottom: 8px; display: flex; justify-content: space-between; color: rgba(255,255,255,.82); font-size: 10px; text-shadow: 0 1px 4px rgba(0,0,0,.65); pointer-events: none; }
+.image-open-url-button { position: absolute; right: 38px; bottom: 7px; z-index: 3; display: inline-flex; align-items: center; gap: 4px; min-height: 23px; padding: 0 7px; border: 1px solid rgba(125,199,185,.55); border-radius: 5px; color: var(--mint); background: rgba(12,15,21,.88); cursor: pointer; font-size: 10px; }
+.image-open-url-button:hover, .image-open-url-button:focus-visible { color: #10131a; background: var(--mint); outline: none; }
 .image-request-info, .image-response-info { position: absolute; bottom: 7px; z-index: 3; }
 .image-request-info { left: 8px; }
 .image-response-info { right: 8px; }

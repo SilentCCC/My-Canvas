@@ -55,6 +55,7 @@ import {
 const HISTORY_KEY = "ai-canvas-history-v1";
 const DEFAULT_SIZE_SELECTION = getImageSizeSelection({ model: DEFAULT_IMAGE_MODEL });
 const IMAGE_GENERATION_TIMEOUT_MS = 180_000;
+const IMAGE_SAVE_BROWSER_TIMEOUT_MS = 60_000;
 
 const cn = {
   appTitle: "AI \u65e0\u9650\u753b\u5e03",
@@ -72,6 +73,7 @@ const cn = {
   generatedImage: "\u751f\u6210\u56fe\u7247",
   imagePlaceholder: "\u56fe\u7247\u5c06\u663e\u793a\u5728\u6b64",
   imageSaving: "\u6b63\u5728\u8bfb\u53d6\u672c\u5730\u56fe\u7247...",
+  imageSaveFailed: "\u56fe\u7247\u4e0b\u8f7d\u548c\u4fdd\u5b58\u5931\u8d25\u3002",
   waiting: "\u7b49\u5f85",
   temporaryUrl: "\u4e34\u65f6 URL\uff1a",
   downloadMethod: "\u4e0b\u8f7d\u65b9\u5f0f\uff1a",
@@ -96,6 +98,7 @@ const cn = {
   errorInfo: "\u9519\u8bef\uff1a",
   infoUnavailable: "\u672a\u83b7\u53d6",
   openImage: "\u6253\u5f00\u56fe\u7247",
+  openUrl: "\u6253\u5f00 URL",
   downloadImage: "\u4e0b\u8f7d\u56fe\u7247",
   deleteImageNode: "\u5220\u9664\u56fe\u7247\u8282\u70b9",
   untitledGeneration: "\u672a\u547d\u540d\u751f\u6210",
@@ -124,6 +127,10 @@ const cn = {
   keyMissing: "\u5c1a\u672a\u914d\u7f6e\u5bc6\u94a5",
   endpoint: "Endpoint \u5730\u5740",
   appendEndpoint: "\u670d\u52a1\u7aef\u4f1a\u5728\u9700\u8981\u65f6\u81ea\u52a8\u8865\u4e0a",
+  imageDownloadProxy: "\u56fe\u7247\u4e0b\u8f7d\u4ee3\u7406",
+  imageDownloadProxyEnabled: "\u56fe\u7247\u4e0b\u8f7d\u4ee3\u7406\u5f00\u5173",
+  imageDownloadProxyPort: "\u4ee3\u7406\u7aef\u53e3",
+  imageDownloadProxyHint: "\u53ef\u76f4\u63a5\u586b\u5199\u7aef\u53e3\uff08\u5982 7890\uff09\uff0c\u4e5f\u652f\u6301\u5b8c\u6574 HTTP/HTTPS/SOCKS \u5730\u5740\u3002",
   apiKey: "API Key",
   keepSavedKey: "\u7559\u7a7a\u4ee5\u4fdd\u7559\u5df2\u4fdd\u5b58\u7684\u5bc6\u94a5",
   keyNote: "\u7531\u672c\u5730 Node \u670d\u52a1\u4fdd\u5b58\uff0c\u6d4f\u89c8\u5668\u4e0d\u4f1a\u8bfb\u53d6\u5bc6\u94a5\u539f\u6587\u3002",
@@ -496,6 +503,8 @@ function ImageNode({ id, data, selected }) {
   const formatDurationMs = (value) => Number(value) >= 0 ? formatDuration(Math.round(Number(value) / 1000)) : cn.infoUnavailable;
   const imageSource = displayImageSource(data.src);
   const temporaryUrl = data.sourceImageUrl || (data.src?.startsWith("data:") ? "Base64 \u5185\u5d4c\u6570\u636e（\u65e0\u4e34\u65f6 URL）" : (data.src || cn.infoUnavailable));
+  const sourceImageUrl = String(data.sourceImageUrl || "");
+  const canOpenSourceUrl = /^https?:\/\//i.test(sourceImageUrl);
   const downloadMethod = data.savedPath ? "\u672c\u5730\u81ea\u52a8\u4fdd\u5b58 + \u6d4f\u89c8\u5668\u4e0b\u8f7d" : data.src?.startsWith("data:") ? "\u6d4f\u89c8\u5668\u4e0b\u8f7d（Base64）" : data.src ? "\u6d4f\u89c8\u5668\u4e0b\u8f7d（\u4e34\u65f6 URL）" : cn.infoUnavailable;
   const referenceImageCount = Number.isFinite(Number(data.referenceImageCount)) ? Number(data.referenceImageCount) : (Array.isArray(data.referenceImages) ? data.referenceImages.length : data.referenceImage ? 1 : 0);
   const requestProfile = data.profileName || data.profileId || cn.infoUnavailable;
@@ -523,10 +532,11 @@ function ImageNode({ id, data, selected }) {
         </div>
       </div>
       <div className="image-frame nodrag" onDoubleClick={handleImageDoubleClick}>
-        {data.src ? <img src={imageSource} alt={data.title || cn.generatedImage} draggable="false" onDoubleClick={handleImageDoubleClick} onLoad={(event) => { const image = event.currentTarget; setActualSize({ width: image.naturalWidth, height: image.naturalHeight }); data.onImageLoad?.(id, image.naturalWidth, image.naturalHeight); }} /> : <div className={`image-placeholder ${data.status === "error" ? "is-error" : ""}`}><Loader2 size={25} className={data.status === "generating" || data.saveStatus === "pending" ? "spin" : ""} /><span>{data.status === "error" ? (data.error || cn.generationFailed) : data.status === "generating" ? cn.generating : data.saveStatus === "pending" ? cn.imageSaving : cn.imagePlaceholder}</span></div>}
+        {data.src ? <img src={imageSource} alt={data.title || cn.generatedImage} draggable="false" onDoubleClick={handleImageDoubleClick} onLoad={(event) => { const image = event.currentTarget; setActualSize({ width: image.naturalWidth, height: image.naturalHeight }); data.onImageLoad?.(id, image.naturalWidth, image.naturalHeight); }} /> : <div className={`image-placeholder ${data.status === "error" || data.saveStatus === "error" ? "is-error" : ""}`}><Loader2 size={25} className={data.status === "generating" || ["pending", "server-saving", "browser-saving"].includes(data.saveStatus) ? "spin" : ""} /><span>{data.status === "error" ? (data.error || cn.generationFailed) : data.status === "generating" ? cn.generating : data.saveStatus === "error" ? (data.saveError || cn.imageSaveFailed) : ["pending", "server-saving", "browser-saving"].includes(data.saveStatus) ? cn.imageSaving : cn.imagePlaceholder}</span></div>}
         {data.status === "generating" && <span className="image-wait-time"><Clock3 size={11} /> {cn.waiting} {formatDuration(waitSeconds)}</span>}
         {data.status === "success" && generationDuration && <span className="image-wait-time"><Clock3 size={11} /> 耗时 {generationDuration}</span>}
         <div className="image-overlay"><span>{data.model || "gpt-image-2"}</span><span>{displayedImageSize}</span></div>
+        {canOpenSourceUrl && <button type="button" className="image-open-url-button nodrag" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); data.onOpenUrl?.(sourceImageUrl); }} aria-label={cn.openUrl} title={cn.openUrl}><ExternalLink size={12} /><span>{cn.openUrl}</span></button>}
         <div className="image-request-info nodrag" onClick={(event) => event.stopPropagation()}>
           <button type="button" className="image-info-button" aria-label={cn.requestInfo} title={cn.requestInfo}><AlertCircle size={15} /></button>
           <div className="image-info-tooltip image-request-tooltip" role="tooltip">
@@ -553,7 +563,8 @@ function ImageNode({ id, data, selected }) {
             <div><span>{cn.imageDownloadDuration}</span><strong>{formatDurationMs(data.imageDownloadDurationMs)}</strong></div>
             <div><span>{cn.localWriteDuration}</span><strong>{formatDurationMs(data.localWriteDurationMs)}</strong></div>
             <div><span>{cn.totalDuration}</span><strong>{generationDuration || cn.infoUnavailable}</strong></div>
-            {(data.rawResponseText || data.responseText || data.error) && <div className="image-info-response"><span>{cn.rawResponseInfo}</span><pre className="image-response-json">{data.rawResponseText || data.responseText || data.error}</pre></div>}
+            {(data.rawResponseText || data.responseText || data.error || data.saveError) && <div className="image-info-response"><span>{cn.rawResponseInfo}</span><pre className="image-response-json">{data.rawResponseText || data.responseText || data.error || data.saveError}</pre></div>}
+            {data.saveStatus === "error" && <div><span>{cn.errorInfo}</span><strong>{data.saveError || cn.imageSaveFailed}</strong></div>}
             {data.status === "error" && <div><span>{cn.errorInfo}</span><strong>{data.error || cn.generationFailed}</strong></div>}
           </div>
         </div>
@@ -648,7 +659,7 @@ function Sidebar({ activePanel, setActivePanel, collapsed, setCollapsed, canvase
         </button>
         {!collapsed && <div className="canvas-list">{canvases.map((canvas) => <div key={canvas.id} className={`canvas-list-item ${canvas.id === activeCanvasId ? "is-active" : ""}`}><button className="canvas-select-button" onClick={() => onSelectCanvas(canvas.id)} title={canvas.name}><Layers3 size={14} /><span>{canvas.name}</span></button><button className="canvas-rename-button" onClick={(event) => { event.stopPropagation(); onRenameCanvas(canvas.id); }} aria-label={cn.renameCanvas} title={cn.renameCanvas}><Pencil size={13} /></button>{canvases.length > 1 && <button className="canvas-delete-button" onClick={(event) => { event.stopPropagation(); onDeleteCanvas(canvas.id); }} aria-label={cn.deleteCanvas} title={cn.deleteCanvas}><Trash2 size={13} /></button>}</div>)}</div>}
       </div>
-      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.0.23</span></div>}
+      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.0.29</span></div>}
     </aside>
   );
 }
@@ -808,6 +819,10 @@ function SettingsView({ config, apiKeyDraft, setApiKeyDraft, onChange, onSizeCha
           <div className="field-with-icon"><Server size={16} /><input id="endpoint" value={config.endpoint} onChange={(event) => onChange("endpoint", event.target.value)} placeholder="https://provider.example/v1" /></div>
           <p className="field-note">{cn.appendEndpoint} <code>/images/generations</code>.</p>
 
+          <label className="field-label" htmlFor="image-download-proxy-enabled">{cn.imageDownloadProxyEnabled}</label>
+          <select id="image-download-proxy-enabled" value={config.imageDownloadProxyEnabled ? "on" : "off"} onChange={(event) => onChange("imageDownloadProxyEnabled", event.target.value === "on")}><option value="off">\u5173</option><option value="on">\u5f00</option></select>
+          {config.imageDownloadProxyEnabled && <><label className="field-label" htmlFor="image-download-proxy">{cn.imageDownloadProxyPort}</label><div className="field-with-icon"><Server size={16} /><input id="image-download-proxy" value={config.imageDownloadProxy || ""} onChange={(event) => onChange("imageDownloadProxy", event.target.value)} placeholder="7890" autoComplete="off" /></div><p className="field-note">{cn.imageDownloadProxyHint}</p></>}
+
           <label className="field-label" htmlFor="api-key">{cn.apiKey}</label>
           <div className="field-with-icon api-key-field"><KeyRound size={16} /><input id="api-key" type={showApiKey ? "text" : "password"} value={apiKeyDraft} onChange={(event) => setApiKeyDraft(event.target.value)} placeholder={config.hasApiKey ? "****************" : "sk-..."} autoComplete="off" /><button type="button" className="icon-button field-toggle" onClick={toggleApiKeyVisibility} aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"} title={showApiKey ? "隐藏 API Key" : "显示 API Key"}>{showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}</button></div>
           <p className="field-note">{cn.keyNote}</p>
@@ -892,7 +907,7 @@ function HistoryView({ history, onAddHistoryImage, onClearHistory, onDeleteHisto
   return (
     <section className="history-view page-view">
       <div className="page-heading"><div><span className="eyebrow"><Clock3 size={14} /> {cn.generations}</span><h1>{cn.history}</h1><p>{cn.historyIntro}</p></div>{history.length > 0 && <button className="toolbar-button danger" onClick={onClearHistory}><Trash2 size={16} /><span>{cn.clearHistory}</span></button>}</div>
-      {history.length === 0 ? <div className="empty-state"><HistoryIcon size={30} /><strong>{cn.noGenerations}</strong><span>{cn.historyEmpty}</span></div> : <div className="history-grid">{history.map((item) => <article className="history-card" key={item.id}><div className="history-image">{item.src ? <img src={item.src} alt={item.prompt} /> : <div className="image-placeholder"><Loader2 size={22} className="spin" /><span>{cn.imageSaving}</span></div>}<HistoryInfoButtons item={item} /></div><div className="history-card-body"><div className="history-meta"><span>{item.model}</span><span>{formatDate(item.createdAt)}</span></div><p>{item.prompt}</p><div className="history-card-actions"><button className="small-button" onClick={() => onAddHistoryImage(item)} disabled={!item.src}><Plus size={14} /> {cn.addToCanvas}</button><button className="icon-button subtle" onClick={() => onDownload(item.src, item.model)} disabled={!item.src} aria-label={cn.downloadImage} title={cn.downloadImage}><Download size={15} /></button><button className="icon-button subtle danger" onClick={() => onDeleteHistoryItem(item.id)} aria-label="删除这条历史记录" title="删除这条历史记录"><Trash2 size={15} /></button></div></div></article>)}</div>}
+      {history.length === 0 ? <div className="empty-state"><HistoryIcon size={30} /><strong>{cn.noGenerations}</strong><span>{cn.historyEmpty}</span></div> : <div className="history-grid">{history.map((item) => <article className="history-card" key={item.id}><div className="history-image">{item.src ? <img src={item.src} alt={item.prompt} /> : <div className={`image-placeholder ${item.saveStatus === "error" ? "is-error" : ""}`}><Loader2 size={22} className={item.saveStatus === "error" ? "" : "spin"} /><span>{item.saveStatus === "error" ? (item.saveError || cn.imageSaveFailed) : cn.imageSaving}</span></div>}<HistoryInfoButtons item={item} /></div><div className="history-card-body"><div className="history-meta"><span>{item.model}</span><span>{formatDate(item.createdAt)}</span></div><p>{item.prompt}</p><div className="history-card-actions"><button className="small-button" onClick={() => onAddHistoryImage(item)} disabled={!item.src}><Plus size={14} /> {cn.addToCanvas}</button><button className="icon-button subtle" onClick={() => onDownload(item.src, item.model)} disabled={!item.src} aria-label={cn.downloadImage} title={cn.downloadImage}><Download size={15} /></button><button className="icon-button subtle danger" onClick={() => onDeleteHistoryItem(item.id)} aria-label="删除这条历史记录" title="删除这条历史记录"><Trash2 size={15} /></button></div></div></article>)}</div>}
     </section>
   );
 }
@@ -939,6 +954,7 @@ function AppShell() {
   const stableDelete = useCallback((id) => handlersRef.current.deleteNode?.(id), []);
   const stableDownload = useCallback((src, title) => handlersRef.current.downloadImage?.(src, title), []);
   const stableOpen = useCallback((src) => handlersRef.current.openImage?.(src), []);
+  const stableOpenUrl = useCallback((src) => handlersRef.current.openUrl?.(src), []);
   const stablePreview = useCallback((src, title, originalSrc) => handlersRef.current.previewImage?.(src, title, originalSrc), []);
   const stableShowPrompt = useCallback((id) => handlersRef.current.showPromptForImage?.(id), []);
   const stableParamChange = useCallback((id, key, value) => handlersRef.current.updateNodeParam?.(id, key, value), []);
@@ -946,7 +962,7 @@ function AppShell() {
   const stableFileSize = useCallback((id, fileSize) => handlersRef.current.updateFileSize?.(id, fileSize), []);
   const stableImageLoad = useCallback((id, width, height) => handlersRef.current.imageLoad?.(id, width, height), []);
   const stableResetGeneration = useCallback((id) => handlersRef.current.resetGeneration?.(id), []);
-  const [config, setConfig] = useState({ activeProfileId: "default", profiles: [{ id: "default", name: "默认配置", endpoint: "https://api.openai.com/v1", model: DEFAULT_IMAGE_MODEL, ...DEFAULT_SIZE_SELECTION, quality: "high", responseFormat: "url", outputDir: "output", hasApiKey: false }], id: "default", name: "默认配置", endpoint: "https://api.openai.com/v1", model: DEFAULT_IMAGE_MODEL, ...DEFAULT_SIZE_SELECTION, quality: "high", responseFormat: "url", outputDir: "output", hasApiKey: false });
+  const [config, setConfig] = useState({ activeProfileId: "default", profiles: [{ id: "default", name: "默认配置", endpoint: "https://api.openai.com/v1", model: DEFAULT_IMAGE_MODEL, ...DEFAULT_SIZE_SELECTION, quality: "high", responseFormat: "url", outputDir: "output", hasApiKey: false }], id: "default", name: "默认配置", endpoint: "https://api.openai.com/v1", model: DEFAULT_IMAGE_MODEL, ...DEFAULT_SIZE_SELECTION, quality: "high", responseFormat: "url", outputDir: "output", imageDownloadProxyEnabled: false, imageDownloadProxy: "", hasApiKey: false });
   const [modelFetchState, setModelFetchState] = useState("idle");
   const [modelFetchError, setModelFetchError] = useState("");
   const [fetchedModelsByProfile, setFetchedModelsByProfile] = useState(loadFetchedModelsByProfile);
@@ -964,7 +980,7 @@ function AppShell() {
     const selectedModels = selectedModelsByProfile[profileId];
     return Array.isArray(selectedModels) ? selectedModels.filter((model) => fetchedModels.includes(model)) : fetchedModels;
   }, [fetchedModelsByProfile, selectedModelsByProfile]);
-  const seededNodes = useMemo(() => (activeCanvas?.nodes || []).map((node) => ({ ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, modelOptions: getProfileModelOptions(node.data?.profileId || config.activeProfileId), onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onParamChange: stableParamChange, onSizeChange: stableSizeChange } })), [activeCanvasId, config.activeProfileId, config.profiles, getProfileModelOptions, stableDelete, stableFileSize, stableGenerate, stableGroupFiles, stableGroupImagesChange, stableImageLoad, stableParamChange, stablePreview, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableShowPrompt, stableSizeChange]);
+  const seededNodes = useMemo(() => (activeCanvas?.nodes || []).map((node) => ({ ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, modelOptions: getProfileModelOptions(node.data?.profileId || config.activeProfileId), onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onParamChange: stableParamChange, onSizeChange: stableSizeChange } })), [activeCanvasId, config.activeProfileId, config.profiles, getProfileModelOptions, stableDelete, stableDownload, stableFileSize, stableGenerate, stableGroupFiles, stableGroupImagesChange, stableImageLoad, stableOpen, stableOpenUrl, stableParamChange, stablePreview, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableShowPrompt, stableSizeChange]);
   const [nodes, setNodes, onNodesChange] = useNodesState(seededNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(activeCanvas?.edges || []);
   const [apiKeyDraft, setApiKeyDraft] = useState("");
@@ -1079,6 +1095,10 @@ function AppShell() {
   }, []);
 
   const openImage = useCallback((src) => window.open(displayImageSource(src), "_blank", "noopener,noreferrer"), []);
+  const openUrl = useCallback((src) => {
+    const url = String(src || "");
+    if (/^https?:\/\//i.test(url)) window.open(url, "_blank", "noopener,noreferrer");
+  }, []);
   const openImagePreview = useCallback((src, title, originalSrc = "") => setPreviewImage({ src, title, originalSrc }), []);
   const appendGenerationLog = useCallback((entry) => setGenerationLogs((current) => [{ id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, createdAt: new Date().toISOString(), ...entry }, ...current].slice(0, 50)), []);
   const appendHistory = useCallback((item) => setHistory((current) => {
@@ -1100,9 +1120,11 @@ function AppShell() {
   const pollImageSave = useCallback(async (jobId, sourceImageUrl, nodeId, historyId, startedAt) => {
     const uploadBrowserImage = async () => {
       if (!sourceImageUrl) return false;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), IMAGE_SAVE_BROWSER_TIMEOUT_MS);
       try {
         const downloadStartedAt = Date.now();
-        const response = await fetch(sourceImageUrl, { cache: "no-store" });
+        const response = await fetch(sourceImageUrl, { cache: "no-store", signal: controller.signal });
         if (!response.ok) return false;
         const blob = await response.blob();
         if (!blob.size) return false;
@@ -1116,29 +1138,36 @@ function AppShell() {
         return upload.ok;
       } catch {
         return false;
+      } finally {
+        window.clearTimeout(timeout);
       }
     };
-    const browserSaved = await uploadBrowserImage();
-    if (!browserSaved) {
-      fetch(`/api/image-save-fallback/${encodeURIComponent(jobId)}`, { method: "POST" }).catch(() => undefined);
-    }
+    const applyCompletedJob = (job) => {
+      const patch = { src: job.localImageUrl || "", savedPath: job.savedPath || "", fileSize: job.fileSize || 0, imageDownloadDurationMs: job.imageDownloadDurationMs, localWriteDurationMs: job.localWriteDurationMs, saveStatus: "completed", generationDurationMs: startedAt ? Date.now() - startedAt : undefined };
+      setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, data: { ...node.data, ...patch } } : node));
+      updateHistoryItem(historyId, patch);
+    };
     for (let attempt = 0; attempt < 180; attempt += 1) {
       try {
         const response = await fetch(`/api/image-save-status/${encodeURIComponent(jobId)}`);
         if (!response.ok) return;
         const job = await response.json();
-        if (job.status === "pending" || job.status === "browser-saving") {
+        if (job.status === "pending" || job.status === "server-saving" || job.status === "browser-saving") {
           await new Promise((resolve) => window.setTimeout(resolve, 500));
           continue;
         }
         if (job.status === "completed") {
-          const patch = { src: job.localImageUrl || "", savedPath: job.savedPath || "", fileSize: job.fileSize || 0, imageDownloadDurationMs: job.imageDownloadDurationMs, localWriteDurationMs: job.localWriteDurationMs, saveStatus: "completed", generationDurationMs: startedAt ? Date.now() - startedAt : undefined };
-          setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, data: { ...node.data, ...patch } } : node));
-          updateHistoryItem(historyId, patch);
+          applyCompletedJob(job);
         }
         if (job.status === "error") {
-          setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, data: { ...node.data, saveStatus: "error", saveError: job.error || "Image save failed." } } : node));
-          updateHistoryItem(historyId, { saveStatus: "error", saveError: job.error || "Image save failed." });
+          const browserSaved = await uploadBrowserImage();
+          if (browserSaved) {
+            await new Promise((resolve) => window.setTimeout(resolve, 250));
+            continue;
+          }
+          const saveError = job.error || "图片下载和保存失败。";
+          setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, data: { ...node.data, saveStatus: "error", saveError } } : node));
+          updateHistoryItem(historyId, { saveStatus: "error", saveError });
         }
         return;
       } catch {
@@ -1181,7 +1210,7 @@ function AppShell() {
       const requestProfile = (config.profiles || []).find((profile) => profile.id === requestProfileId);
       const outputNodes = tasks.map((referenceImages, index) => {
         const imageId = `image-${generationBatchId}-${index}`;
-        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80, y: outputStartY + index * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", comparisonSource: referenceImages[0] || "", prompt, title: prompt, model, quality, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: referenceImages.length, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
+        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80, y: outputStartY + index * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", comparisonSource: referenceImages[0] || "", prompt, title: prompt, model, quality, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: referenceImages.length, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
       });
       outputNodeIds = outputNodes.map((node) => node.id);
       setNodes((current) => [...current, ...outputNodes]);
@@ -1234,7 +1263,7 @@ function AppShell() {
       if (outputNodeIds.length) setNodes((current) => current.map((node) => outputNodeIds.includes(node.id) && !node.data?.src ? { ...node, data: { ...node.data, status: "error", error: error.message || cn.generationFailed, responseText: error.message || cn.generationFailed, rawResponseText: "" } } : node));
       updateNodeData(id, { status: "error", error: error.message || cn.generationFailed, generationStartedAt: "" });
     }
-  }, [appendGenerationLog, appendHistory, config.activeProfileId, config.model, config.quality, config.size, edges, nodes, pollImageSave, setEdges, setNodes, stableDelete, stableDownload, stableFileSize, stableOpen, stablePreview, stableShowPrompt, updateNodeData]);
+  }, [appendGenerationLog, appendHistory, config.activeProfileId, config.model, config.quality, config.size, edges, nodes, pollImageSave, setEdges, setNodes, stableDelete, stableDownload, stableFileSize, stableOpen, stableOpenUrl, stablePreview, stableShowPrompt, updateNodeData]);
 
   const addPromptAt = useCallback((position) => {
     const id = `prompt-${Date.now()}`;
@@ -1272,17 +1301,17 @@ function AppShell() {
     setEdges((current) => current.some((edge) => edge.source === sourceId && edge.target === id) ? current : [...current, { id: `edge-${sourceId}-${id}`, source: sourceId, target: id, animated: true, style: { stroke: isImage ? "#7dc7b9" : "#86a9e9", strokeWidth: 1.5 } }]);
   }, [config, getProfileModelOptions, nodes, setEdges, setNodes, stableDelete, stableGenerate, stableParamChange, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableSizeChange]);
 
-  handlersRef.current = { updatePrompt, updateReference, referenceFiles, updateGroupImages, groupFiles, updateNodeParam, updateNodeSize, updateFileSize, imageLoad: updateImageLoad, resetGeneration, generateImage, deleteNode, downloadImage, openImage, previewImage: openImagePreview, showPromptForImage };
+  handlersRef.current = { updatePrompt, updateReference, referenceFiles, updateGroupImages, groupFiles, updateNodeParam, updateNodeSize, updateFileSize, imageLoad: updateImageLoad, resetGeneration, generateImage, deleteNode, downloadImage, openImage, openUrl, previewImage: openImagePreview, showPromptForImage };
 
   const selectCanvas = useCallback((canvasId) => {
     if (canvasId === activeCanvasId) return;
     const next = canvasState.canvases.find((canvas) => canvas.id === canvasId);
     if (!next) return;
     setCanvasState((current) => ({ ...current, activeId: canvasId }));
-    setNodes(next.nodes.map((node) => ({ ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, modelOptions: getProfileModelOptions(node.data?.profileId || config.activeProfileId), onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onParamChange: stableParamChange, onSizeChange: stableSizeChange } })));
+    setNodes(next.nodes.map((node) => ({ ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, modelOptions: getProfileModelOptions(node.data?.profileId || config.activeProfileId), onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onParamChange: stableParamChange, onSizeChange: stableSizeChange } })));
     setEdges(next.edges || []);
     setActivePanel("canvas");
-  }, [activeCanvasId, canvasState.canvases, config.activeProfileId, config.profiles, getProfileModelOptions, setEdges, setNodes, stableDelete, stableFileSize, stableGenerate, stableGroupFiles, stableGroupImagesChange, stableImageLoad, stableParamChange, stablePreview, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableShowPrompt, stableSizeChange]);
+  }, [activeCanvasId, canvasState.canvases, config.activeProfileId, config.profiles, getProfileModelOptions, setEdges, setNodes, stableDelete, stableDownload, stableFileSize, stableGenerate, stableGroupFiles, stableGroupImagesChange, stableImageLoad, stableOpen, stableOpenUrl, stableParamChange, stablePreview, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableShowPrompt, stableSizeChange]);
 
   const createCanvas = useCallback(() => {
     const id = `canvas-${Date.now()}`;
@@ -1309,16 +1338,16 @@ function AppShell() {
     const nextActive = remaining.find((canvas) => canvas.id === nextActiveId) || remaining[0];
     setCanvasState({ activeId: nextActive.id, canvases: remaining });
     if (canvasId === activeCanvasId) {
-      setNodes(nextActive.nodes.map((node) => ({ ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, modelOptions: getProfileModelOptions(node.data?.profileId || config.activeProfileId), onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onParamChange: stableParamChange, onSizeChange: stableSizeChange } })));
+    setNodes(nextActive.nodes.map((node) => ({ ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, modelOptions: getProfileModelOptions(node.data?.profileId || config.activeProfileId), onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onParamChange: stableParamChange, onSizeChange: stableSizeChange } })));
       setEdges(nextActive.edges || []);
     }
     setActivePanel("canvas");
-  }, [activeCanvasId, canvasState.canvases, config.activeProfileId, config.profiles, getProfileModelOptions, setEdges, setNodes, stableDelete, stableFileSize, stableGenerate, stableGroupFiles, stableGroupImagesChange, stableImageLoad, stableParamChange, stablePreview, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableShowPrompt, stableSizeChange]);
+  }, [activeCanvasId, canvasState.canvases, config.activeProfileId, config.profiles, getProfileModelOptions, setEdges, setNodes, stableDelete, stableDownload, stableFileSize, stableGenerate, stableGroupFiles, stableGroupImagesChange, stableImageLoad, stableOpen, stableOpenUrl, stableParamChange, stablePreview, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableShowPrompt, stableSizeChange]);
 
   const saveSettings = useCallback(async () => {
     setSaveState("saving");
     try {
-      const response = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profileId: config.activeProfileId, name: config.name, endpoint: config.endpoint, model: config.model, resolution: config.resolution, ratio: config.ratio, width: config.width, height: config.height, size: config.size, quality: config.quality, responseFormat: config.responseFormat || "url", outputDir: config.outputDir, apiKey: apiKeyDraft.trim() || undefined }) });
+      const response = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profileId: config.activeProfileId, name: config.name, endpoint: config.endpoint, model: config.model, resolution: config.resolution, ratio: config.ratio, width: config.width, height: config.height, size: config.size, quality: config.quality, responseFormat: config.responseFormat || "url", outputDir: config.outputDir, imageDownloadProxyEnabled: Boolean(config.imageDownloadProxyEnabled), imageDownloadProxy: config.imageDownloadProxy || "", apiKey: apiKeyDraft.trim() || undefined }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || cn.saveFailed);
       setConfig((current) => ({ ...current, ...result.config })); setSaveState("saved");
@@ -1419,9 +1448,9 @@ function AppShell() {
     const rect = canvasRef.current?.getBoundingClientRect();
     const position = flowInstance && rect ? flowInstance.screenToFlowPosition({ x: rect.left + rect.width / 2 - 170, y: rect.top + rect.height / 2 - 150 }) : { x: 200, y: 160 };
     const id = `image-${Date.now()}`;
-    setNodes((current) => [...current, { id, type: "image", position, style: { width: 360 }, data: { ...item, id, title: item.prompt, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } }]);
+    setNodes((current) => [...current, { id, type: "image", position, style: { width: 360 }, data: { ...item, id, title: item.prompt, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } }]);
     setActivePanel("canvas");
-  }, [flowInstance, setNodes, stableDelete, stableDownload, stableFileSize, stableImageLoad, stableOpen, stablePreview, stableShowPrompt]);
+  }, [flowInstance, setNodes, stableDelete, stableDownload, stableFileSize, stableImageLoad, stableOpen, stableOpenUrl, stablePreview, stableShowPrompt]);
 
   const addImageFileAt = useCallback((file, position) => {
     if (!file?.type?.startsWith("image/")) return;
@@ -1430,11 +1459,11 @@ function AppShell() {
       const id = `image-${Date.now()}`;
       const src = String(reader.result || "");
       const item = { id, src, prompt: file.name || cn.generatedImage, model: config.model, ...normalizeImageSizeSelection(config), createdAt: new Date().toISOString() };
-      setNodes((current) => [...current, { id, type: "image", position, style: { width: 360 }, data: { ...item, title: item.prompt, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onPreview: stablePreview, onFileSize: stableFileSize, onShowPrompt: stableShowPrompt } }]);
+      setNodes((current) => [...current, { id, type: "image", position, style: { width: 360 }, data: { ...item, title: item.prompt, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onShowPrompt: stableShowPrompt } }]);
       setToast(cn.imageAddedToast);
     };
     reader.readAsDataURL(file);
-  }, [config.model, config.size, setNodes, stableDelete, stableDownload, stableFileSize, stableOpen, stablePreview, stableShowPrompt]);
+  }, [config.model, config.size, setNodes, stableDelete, stableDownload, stableFileSize, stableImageLoad, stableOpen, stableOpenUrl, stablePreview, stableShowPrompt]);
 
   const clearHistory = useCallback(() => { setHistory([]); localStorage.removeItem(HISTORY_KEY); }, []);
   const deleteHistoryItem = useCallback((id) => {

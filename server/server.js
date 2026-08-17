@@ -1,5 +1,9 @@
 import express from "express";
+import { spawn } from "node:child_process";
+import http from "node:http";
 import fs from "node:fs/promises";
+import https from "node:https";
+import os from "node:os";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,10 +20,33 @@ function configuredPort(value) {
 function readAppSettings() {
   try { return JSON.parse(readFileSync(settingsPath, "utf8")); } catch { return {}; }
 }
+async function writeAppSettings(settings) {
+  await fs.writeFile(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+}
+function normalizeImageDownloadProxy(value) {
+  const source = String(value || "").trim();
+  if (!source) return "";
+  const candidate = /^\d{1,5}$/.test(source)
+    ? `http://127.0.0.1:${source}`
+    : /^[a-z][a-z0-9+.-]*:\/\//i.test(source) ? source : `http://${source}`;
+  const parsed = new URL(candidate);
+  if (!new Set(["http:", "https:", "socks4:", "socks4a:", "socks5:", "socks5h:"]).has(parsed.protocol)) throw new Error("图片下载代理必须是 HTTP、HTTPS 或 SOCKS 地址。");
+  return candidate;
+}
+function normalizeImageDownloadProxyEnabled(value) {
+  return value === true || value === "true";
+}
+function configuredImageDownloadProxy() {
+  const settings = readAppSettings();
+  if (!normalizeImageDownloadProxyEnabled(settings.imageDownloadProxyEnabled)) return "";
+  try { return normalizeImageDownloadProxy(settings.imageDownloadProxy); } catch { return ""; }
+}
 const port = configuredPort(readAppSettings().port);
 const defaultOutputDir = path.join(projectRoot, "output");
 const legacyDefaultOutputDir = "E:\\Canvas\\output";
 const imageGenerationTimeoutMs = 180_000;
+const imageDownloadTimeoutMs = 60_000;
+const imageDownloadRetryDelaysMs = [0, 1_000, 3_000];
 const verifiedImageResponseOptions = { n: 1 };
 const imageSaveJobs = new Map();
 const GROK_ASPECT_RATIOS = new Set([
@@ -257,9 +284,12 @@ function publicProfile(profile) {
 
 function publicConfig(state) {
   const active = activeProfile(state);
+  const appSettings = readAppSettings();
   return {
     activeProfileId: active.id,
     profiles: state.profiles.map(publicProfile),
+    imageDownloadProxyEnabled: normalizeImageDownloadProxyEnabled(appSettings.imageDownloadProxyEnabled),
+    imageDownloadProxy: String(appSettings.imageDownloadProxy || ""),
     ...publicProfile(active)
   };
 }
@@ -320,6 +350,75 @@ function filenamePart(value) {
   return String(value || "ai-image").slice(0, 50).replace(/[^a-z0-9\u4e00-\u9fff]+/gi, "-").replace(/^-+|-+$/g, "") || "ai-image";
 }
 
+const imageDownloadHeaders = {
+  Accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+  "User-Agent": "Mozilla/5.0 (AI Canvas image downloader)"
+};
+
+function requestRemoteImage(imageUrl, timeoutMs, redirectCount = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 5) return reject(new Error("图片下载重定向次数过多。"));
+    let parsed;
+    try { parsed = new URL(imageUrl); } catch { return reject(new Error("图片 URL 无效。")); }
+    const transport = parsed.protocol === "https:" ? https : parsed.protocol === "http:" ? http : null;
+    if (!transport) return reject(new Error("图片 URL 只支持 HTTP 或 HTTPS。"));
+    const request = transport.get(parsed, { headers: imageDownloadHeaders }, (response) => {
+      const status = Number(response.statusCode || 0);
+      if (status >= 300 && status < 400 && response.headers.location) {
+        response.resume();
+        const redirectedUrl = new URL(response.headers.location, parsed).toString();
+        requestRemoteImage(redirectedUrl, timeoutMs, redirectCount + 1).then(resolve, reject);
+        return;
+      }
+      if (status < 200 || status >= 300) {
+        response.resume();
+        reject(new Error(`Image download returned ${status || "unknown status"}.`));
+        return;
+      }
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => resolve({ buffer: Buffer.concat(chunks), contentType: response.headers["content-type"] || "image/png" }));
+      response.on("error", reject);
+    });
+    const timeout = setTimeout(() => request.destroy(new Error(`图片下载超时（${Math.round(timeoutMs / 1000)} 秒）。`)), timeoutMs);
+    request.setTimeout(timeoutMs, () => request.destroy(new Error(`图片下载超时（${Math.round(timeoutMs / 1000)} 秒）。`)));
+    request.once("close", () => clearTimeout(timeout));
+    request.once("error", reject);
+  });
+}
+
+async function requestRemoteImageWithCurl(imageUrl, timeoutMs, proxyUrl = "") {
+  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ai-canvas-image-"));
+  const temporaryFile = path.join(temporaryDirectory, "download.bin");
+  const curlCommand = process.platform === "win32" ? "curl.exe" : "curl";
+  try {
+    const result = await new Promise((resolve, reject) => {
+      const args = [
+        "--location", "--fail", "--silent", "--show-error",
+        "--max-time", String(Math.ceil(timeoutMs / 1000)),
+        "--user-agent", imageDownloadHeaders["User-Agent"],
+        "--header", `Accept: ${imageDownloadHeaders.Accept}`,
+        ...(proxyUrl ? ["--proxy", proxyUrl] : []),
+        "--output", temporaryFile,
+        "--write-out", "%{content_type}",
+        imageUrl
+      ];
+      const child = spawn(curlCommand, args, { windowsHide: true });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
+      child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
+      child.once("error", reject);
+      child.once("close", (code) => code === 0 ? resolve({ contentType: stdout.trim() }) : reject(new Error(stderr.trim() || `curl exited with code ${code}.`)));
+    });
+    const buffer = await fs.readFile(temporaryFile);
+    if (!buffer.length) throw new Error("curl returned an empty image.");
+    return { buffer, contentType: result.contentType || "image/png" };
+  } finally {
+    await fs.rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
 async function saveImageToDisk(imageUrl, model, outputDir) {
   let buffer;
   let extension = "png";
@@ -331,11 +430,40 @@ async function saveImageToDisk(imageUrl, model, outputDir) {
     extension = (match[1] || "image/png").split("/")[1] || "png";
   } else {
     const downloadStartedAt = Date.now();
-    const response = await fetch(imageUrl);
-    if (!response.ok) throw new Error(`Image download returned ${response.status}.`);
-    const contentType = response.headers.get("content-type") || "image/png";
-    extension = contentType.split("/")[1]?.split(";")[0] || "png";
-    buffer = Buffer.from(await response.arrayBuffer());
+    let remoteImage;
+    const proxyUrl = configuredImageDownloadProxy();
+    if (proxyUrl) {
+      try {
+        remoteImage = await requestRemoteImageWithCurl(imageUrl, imageDownloadTimeoutMs, proxyUrl);
+      } catch (error) {
+        throw new Error(`通过图片下载代理失败：${error.message || "curl failed"}`);
+      }
+    } else try {
+      remoteImage = await requestRemoteImage(imageUrl, imageDownloadTimeoutMs);
+    } catch (nativeError) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), imageDownloadTimeoutMs);
+        try {
+          const response = await fetch(imageUrl, { signal: controller.signal, headers: imageDownloadHeaders });
+          if (!response.ok) throw new Error(`Image download returned ${response.status}.`);
+          remoteImage = { buffer: Buffer.from(await response.arrayBuffer()), contentType: response.headers.get("content-type") || "image/png" };
+        } finally {
+          clearTimeout(timeout);
+        }
+      } catch (fetchError) {
+        if (fetchError?.name === "AbortError") throw new Error(`图片下载超时（${Math.round(imageDownloadTimeoutMs / 1000)} 秒）。`);
+        try {
+          remoteImage = await requestRemoteImageWithCurl(imageUrl, imageDownloadTimeoutMs);
+        } catch (curlError) {
+          throw new Error(`${nativeError.message || "Native image download failed."}; fetch fallback: ${fetchError.message || "fetch failed"}; curl fallback: ${curlError.message || "curl failed"}`);
+        }
+      }
+    }
+    const contentType = remoteImage.contentType || "image/png";
+    const contentSubtype = contentType.split("/")[1]?.split(";")[0]?.toLowerCase();
+    extension = contentSubtype || "png";
+    buffer = remoteImage.buffer;
     imageDownloadDurationMs = Date.now() - downloadStartedAt;
   }
   const now = new Date();
@@ -346,6 +474,35 @@ async function saveImageToDisk(imageUrl, model, outputDir) {
   await fs.mkdir(outputDir, { recursive: true });
   await fs.writeFile(filePath, buffer);
   return { filePath, fileSize: buffer.length, imageDownloadDurationMs, localWriteDurationMs: Date.now() - localWriteStartedAt };
+}
+
+function saveImageJob(jobId) {
+  return (async () => {
+    const job = imageSaveJobs.get(jobId);
+    if (!job) return;
+    let lastError;
+    for (let attempt = 0; attempt < imageDownloadRetryDelaysMs.length; attempt += 1) {
+      const delay = imageDownloadRetryDelaysMs[attempt];
+      if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+      const current = imageSaveJobs.get(jobId);
+      if (!current || current.status === "completed" || current.status === "browser-saving") return;
+      imageSaveJobs.set(jobId, { ...current, status: "server-saving", downloadAttempt: attempt + 1 });
+      try {
+        const savedImage = await saveImageToDisk(current.sourceImageUrl, current.model, current.outputDir);
+        imageSaveJobs.set(jobId, { status: "completed", sourceImageUrl: current.sourceImageUrl, savedPath: savedImage.filePath, localImageUrl: localImageUrl(savedImage.filePath), fileSize: savedImage.fileSize, imageDownloadDurationMs: savedImage.imageDownloadDurationMs, localWriteDurationMs: savedImage.localWriteDurationMs, downloadAttempt: attempt + 1, updatedAt: Date.now() });
+        return;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    const current = imageSaveJobs.get(jobId);
+    if (current && current.status !== "completed" && current.status !== "browser-saving") {
+      imageSaveJobs.set(jobId, { ...current, status: "error", error: lastError?.message || "Image download and save failed.", updatedAt: Date.now() });
+    }
+  })().catch((error) => {
+    const current = imageSaveJobs.get(jobId);
+    if (current && current.status !== "completed" && current.status !== "browser-saving") imageSaveJobs.set(jobId, { ...current, status: "error", error: error.message || "Image download and save failed.", updatedAt: Date.now() });
+  });
 }
 
 function localImageUrl(filePath) {
@@ -404,11 +561,24 @@ app.post("/api/config", async (req, res) => {
     outputDir: body.outputDir ?? current.outputDir,
     apiKey: typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey : current.apiKey
   });
+  let normalizedImageDownloadProxy;
+  if (Object.hasOwn(body, "imageDownloadProxy")) {
+    try {
+      normalizedImageDownloadProxy = normalizeImageDownloadProxy(body.imageDownloadProxy);
+    } catch (error) {
+      return res.status(400).json({ ok: false, error: error.message || "图片下载代理无效。" });
+    }
+  }
+  const appSettings = readAppSettings();
+  const imageDownloadProxyEnabled = Object.hasOwn(body, "imageDownloadProxyEnabled")
+    ? normalizeImageDownloadProxyEnabled(body.imageDownloadProxyEnabled)
+    : normalizeImageDownloadProxyEnabled(appSettings.imageDownloadProxyEnabled);
   const index = state.profiles.findIndex((profile) => profile.id === current.id);
   if (index >= 0) state.profiles[index] = next;
   else state.profiles.push(next);
   state.activeProfileId = next.id;
   await writeConfig(state);
+  if (Object.hasOwn(body, "imageDownloadProxy") || Object.hasOwn(body, "imageDownloadProxyEnabled")) await writeAppSettings({ ...appSettings, imageDownloadProxy: Object.hasOwn(body, "imageDownloadProxy") ? String(body.imageDownloadProxy || "").trim() : appSettings.imageDownloadProxy, imageDownloadProxyEnabled });
   res.json({ ok: true, config: publicConfig(state) });
 });
 
@@ -540,6 +710,7 @@ app.post("/api/generate", async (req, res) => {
     const sourceImageUrl = imageUrl;
     const saveJobId = `save-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     imageSaveJobs.set(saveJobId, { status: "pending", sourceImageUrl, model, outputDir: config.outputDir, createdAt: Date.now() });
+    void saveImageJob(saveJobId);
     res.json({ ok: true, imageUrl: sourceImageUrl, sourceImageUrl, saveJobId, saveStatus: "pending", revisedPrompt: payload?.data?.[0]?.revised_prompt || "", apiRequestDurationMs, responseText, rawResponseText });
   } catch (error) {
     if (error?.code === "IMAGE_GENERATION_TIMEOUT") return res.status(504).json({ ok: false, error: error.message, responseText: error.message, rawResponseText: "" });
@@ -552,7 +723,7 @@ app.get("/api/image-save-status/:jobId", (req, res) => {
   const job = imageSaveJobs.get(String(req.params.jobId || ""));
   if (!job) return res.status(404).json({ ok: false, error: "Image save job not found." });
   res.json({ ok: true, ...job });
-  if (job.status === "completed" || job.status === "error") imageSaveJobs.delete(String(req.params.jobId || ""));
+  if (job.status === "completed") imageSaveJobs.delete(String(req.params.jobId || ""));
 });
 
 app.post("/api/image-save-fallback/:jobId", async (req, res) => {
@@ -560,18 +731,10 @@ app.post("/api/image-save-fallback/:jobId", async (req, res) => {
   const job = imageSaveJobs.get(jobId);
   if (!job) return res.status(404).json({ ok: false, error: "Image save job not found." });
   if (job.status === "completed") return res.json({ ok: true, ...job });
-  if (job.status !== "pending") return res.status(409).json({ ok: false, error: "Image save job is not available." });
-  imageSaveJobs.set(jobId, { ...job, status: "server-saving" });
-  try {
-    const savedImage = await saveImageToDisk(job.sourceImageUrl, job.model, job.outputDir);
-    const completed = { status: "completed", savedPath: savedImage.filePath, localImageUrl: localImageUrl(savedImage.filePath), fileSize: savedImage.fileSize, imageDownloadDurationMs: savedImage.imageDownloadDurationMs, localWriteDurationMs: savedImage.localWriteDurationMs, updatedAt: Date.now() };
-    imageSaveJobs.set(jobId, completed);
-    res.json({ ok: true, ...completed });
-  } catch (error) {
-    const current = imageSaveJobs.get(jobId);
-    if (current?.status === "server-saving") imageSaveJobs.set(jobId, { ...job, status: "error", error: error.message || "Image download and save failed.", updatedAt: Date.now() });
-    res.status(502).json({ ok: false, error: error.message || "Image download and save failed." });
-  }
+  if (job.status !== "pending" && job.status !== "error") return res.status(409).json({ ok: false, error: "Image save job is not available." });
+  imageSaveJobs.set(jobId, { ...job, status: "pending", error: "", updatedAt: Date.now() });
+  void saveImageJob(jobId);
+  res.json({ ok: true, status: "pending" });
 });
 
 app.post("/api/image-save-upload/:jobId", async (req, res) => {
@@ -579,7 +742,7 @@ app.post("/api/image-save-upload/:jobId", async (req, res) => {
   const job = imageSaveJobs.get(jobId);
   if (!job) return res.status(404).json({ ok: false, error: "Image save job not found." });
   if (job.status === "completed") return res.json({ ok: true, ...job });
-  if (job.status !== "pending") return res.status(409).json({ ok: false, error: "Image save job is not available." });
+  if (job.status !== "pending" && job.status !== "error") return res.status(409).json({ ok: false, error: "Image save job is not available." });
   const imageData = String(req.body?.imageData || "");
   const browserDownloadDurationMs = Number(req.body?.imageDownloadDurationMs);
   if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(imageData)) return res.status(400).json({ ok: false, error: "Invalid image data." });
@@ -620,11 +783,28 @@ app.get("/api/image-proxy", async (req, res) => {
   try { parsed = new URL(String(req.query.url || "")); } catch { return res.status(400).send("Invalid image URL."); }
   if (!/^https?:$/.test(parsed.protocol)) return res.status(400).send("Only http(s) image URLs are supported.");
   try {
-    const response = await fetch(parsed);
-    if (!response.ok) return res.status(response.status).send("Unable to fetch image.");
-    res.setHeader("Content-Type", response.headers.get("content-type") || "image/png");
+    const proxyUrl = configuredImageDownloadProxy();
+    let image;
+    if (proxyUrl) {
+      image = await requestRemoteImageWithCurl(parsed.toString(), imageDownloadTimeoutMs, proxyUrl);
+    } else {
+      try {
+        image = await requestRemoteImage(parsed.toString(), imageDownloadTimeoutMs);
+      } catch {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), imageDownloadTimeoutMs);
+        try {
+          const response = await fetch(parsed, { signal: controller.signal, headers: imageDownloadHeaders });
+          if (!response.ok) return res.status(response.status).send("Unable to fetch image.");
+          image = { buffer: Buffer.from(await response.arrayBuffer()), contentType: response.headers.get("content-type") || "image/png" };
+        } finally {
+          clearTimeout(timeout);
+        }
+      }
+    }
+    res.setHeader("Content-Type", image.contentType || "image/png");
     res.setHeader("Cache-Control", "private, max-age=3600");
-    res.send(Buffer.from(await response.arrayBuffer()));
+    res.send(image.buffer);
   } catch (error) {
     res.status(502).send(error.message || "Unable to fetch image.");
   }
