@@ -112,6 +112,15 @@ button { color: inherit; }
 .canvas-node { position: relative; overflow: hidden; border: 1px solid #353b48; border-radius: 10px; color: var(--text); background: #181c25; box-shadow: 0 12px 35px rgba(0,0,0,.25); }
 .canvas-node.is-selected { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(242,184,102,.25), 0 14px 38px rgba(0,0,0,.3); }
 .prompt-node { width: 100%; min-width: 520px; height: 100%; min-height: 350px; box-sizing: border-box; container-type: inline-size; }
+.comparison-node { width: 760px; min-width: 720px; min-height: 390px; overflow: visible; }
+.comparison-node-body { min-width: 0; }
+.comparison-node-rows { margin-top: 9px; }
+.comparison-node-row-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
+.comparison-node-row { position: relative; display: grid; grid-template-columns: minmax(84px, .8fr) minmax(0, 1.55fr) minmax(58px, .55fr) minmax(0, .9fr) minmax(0, .65fr) 28px; gap: 7px; padding: 7px 0; border-top: 1px solid rgba(255,255,255,.06); }
+.comparison-node-row .node-parameter-field { min-width: 0; }
+.comparison-node-row .node-select { height: 29px; }
+.comparison-node-row .node-model { text-overflow: clip; }
+.comparison-node-row .comparison-remove-api { align-self: end; }
 .image-node { width: 360px; min-height: 330px; overflow: visible; cursor: pointer; }
 .image-group-node { width: 100%; min-width: 390px; height: 100%; min-height: 320px; box-sizing: border-box; }
 .group-icon { color: #86a9e9; background: rgba(134,169,233,.13); }
@@ -179,6 +188,10 @@ button { color: inherit; }
 .image-placeholder svg { color: var(--accent); }
 .image-placeholder.is-error { color: var(--red); }
 .image-placeholder.is-error svg { color: var(--red); }
+.image-placeholder .regenerate-button { color: var(--text); border-color: rgba(242,184,102,.55); background: rgba(26,31,41,.92); }
+.image-placeholder .regenerate-button:hover, .image-placeholder .regenerate-button:focus-visible { color: #19140d; border-color: var(--accent); background: var(--accent); outline: none; }
+.image-placeholder .retry-download-button { color: var(--text); border-color: rgba(134,169,233,.55); background: rgba(26,31,41,.92); }
+.image-placeholder .retry-download-button:hover, .image-placeholder .retry-download-button:focus-visible { color: #10131a; border-color: var(--blue); background: var(--blue); outline: none; }
 .node-render-error, .canvas-render-error { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 120px; padding: 14px; color: var(--red); background: #10131a; font-size: 11px; text-align: center; }
 .canvas-render-error { flex: 1; min-height: 100%; flex-direction: column; color: var(--muted); }
 .canvas-render-error svg { color: var(--red); }
@@ -312,6 +325,53 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .log-entry p { margin: 8px 0; color: var(--text); font-size: 11px; line-height: 1.45; }
 .log-entry pre { max-height: 220px; margin: 0; overflow: auto; padding: 9px; border-radius: 5px; color: #b8c2d0; background: #0c0f15; font: 10px/1.45 Consolas, "Courier New", monospace; white-space: pre-wrap; word-break: break-word; }
 .logs-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; min-height: 260px; color: var(--muted); font-size: 12px; }
+.comparison-window-layer { position: fixed; z-index: 50; inset: 0; pointer-events: none; }
+.comparison-dialog { position: absolute; top: 50%; left: 50%; display: flex; flex-direction: column; width: min(1120px, calc(100vw - 32px)); max-height: min(780px, calc(100vh - 32px)); overflow: hidden; transform: translate(-50%, -50%); border: 1px solid #353b48; border-radius: 10px; background: #181c25; box-shadow: 0 24px 60px rgba(0,0,0,.5); pointer-events: auto; }
+.comparison-node-header { height: 42px; min-height: 42px; padding: 0 11px 0 13px; border-bottom-color: #2a303b; }
+.comparison-node-header { cursor: move; user-select: none; }
+.comparison-node-header > div { gap: 8px; }
+.comparison-node-header .node-icon { flex: 0 0 auto; }
+.comparison-node-header strong { font-size: 12px; font-weight: 550; }
+.comparison-content { display: grid; grid-template-columns: minmax(520px, 560px) minmax(0, 1fr); min-height: 0; }
+.comparison-form { display: flex; flex-direction: column; gap: 9px; min-height: 0; padding: 13px; border-right: 1px solid #2a303b; overflow: auto; }
+.comparison-prompt-label { margin-top: 0; }
+.comparison-prompt { min-height: 126px; resize: vertical; line-height: 1.55; }
+.comparison-section-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-top: 7px; color: var(--muted); font-size: 11px; }
+.comparison-section-heading strong { color: var(--text); font-size: 12px; font-weight: 550; }
+.comparison-api-rows { display: flex; flex-direction: column; gap: 8px; }
+.comparison-api-row { position: relative; display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.5fr) minmax(52px, .45fr) minmax(0, .75fr) minmax(0, .55fr) 28px; gap: 7px; padding: 9px 0; border-top: 1px solid rgba(255,255,255,.06); }
+.comparison-api-field { min-width: 0; }
+.comparison-api-field .node-select { height: 29px; }
+.comparison-model-select { text-overflow: clip; }
+.comparison-api-field select { min-width: 0; }
+.comparison-add-api { color: var(--accent); }
+.comparison-remove-api { align-self: end; }
+.comparison-profile-list { display: flex; flex-direction: column; gap: 5px; }
+.comparison-profile-option { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); background: #11141b; cursor: pointer; }
+.comparison-profile-option:hover, .comparison-profile-option.is-selected { border-color: var(--accent); color: var(--text); background: #1d222c; }
+.comparison-profile-option input { accent-color: var(--accent); }
+.comparison-profile-option span { display: flex; flex-direction: column; min-width: 0; gap: 3px; }
+.comparison-profile-option strong, .comparison-profile-option small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comparison-profile-option strong { font-size: 11px; font-weight: 550; }
+.comparison-profile-option small { color: var(--muted-2); font-size: 10px; }
+.comparison-reference-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.comparison-reference-item, .comparison-add-reference { position: relative; display: grid; width: 58px; height: 45px; place-items: center; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 5px; background: #11141b; }
+.comparison-reference-item img { width: 100%; height: 100%; object-fit: cover; }
+.comparison-reference-item .icon-button { position: absolute; top: 1px; right: 1px; width: 19px; height: 19px; color: #fff; background: rgba(0,0,0,.65); }
+.comparison-add-reference { color: var(--muted); cursor: pointer; font-size: 9px; text-align: center; }
+.comparison-add-reference:hover { color: var(--text); border-color: var(--accent); }
+.comparison-generate-button { margin-top: 8px; }
+.comparison-form-error { margin: 0; color: var(--red); font-size: 10px; }
+.comparison-results { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); align-content: start; gap: 12px; min-height: 330px; padding: 16px; overflow: auto; }
+.comparison-result { min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 6px; background: #11141b; }
+.comparison-result.is-error { border-color: rgba(239,141,130,.7); }
+.comparison-result-heading { display: flex; flex-direction: column; gap: 3px; padding: 9px 10px; }
+.comparison-result-heading strong { overflow: hidden; color: var(--text); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.comparison-result-heading span { overflow: hidden; color: var(--muted-2); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.comparison-result img { display: block; width: 100%; aspect-ratio: 1 / 1; object-fit: contain; background: #090b10; }
+.comparison-result-placeholder { display: grid; min-height: 220px; padding: 12px; place-items: center; color: var(--red); font-size: 11px; text-align: center; }
+.comparison-results-empty { display: flex; grid-column: 1 / -1; align-items: center; justify-content: center; flex-direction: column; gap: 9px; min-height: 300px; color: var(--muted); font-size: 12px; }
+.comparison-results-empty svg { color: var(--muted-2); }
 .image-preview-backdrop { background: rgba(0,0,0,.84); }
 .image-preview-dialog { position: relative; display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: min(100%, 1100px); max-height: calc(100vh - 40px); }
 .image-preview-dialog img { display: block; max-width: 100%; max-height: calc(100vh - 92px); object-fit: contain; transform-origin: center; }
@@ -345,6 +405,11 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
   .primary-button span { display: none; }
   .canvas-hint { right: 16px; top: 13px; }
   .canvas-toolbar-floating { bottom: 16px; }
+  .comparison-content { grid-template-columns: 1fr; max-height: calc(100vh - 84px); overflow: auto; }
+  .comparison-form { border-right: 0; border-bottom: 1px solid var(--border); }
+  .comparison-results { min-height: 240px; }
+  .comparison-api-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .comparison-remove-api { position: absolute; top: 5px; right: 5px; }
   .floating-add { right: 16px; bottom: 18px; }
   .page-view { padding: 30px 20px 50px; }
   .page-heading { flex-direction: column; gap: 17px; margin-bottom: 27px; }
@@ -357,6 +422,9 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 
 @media (max-width: 480px) {
   .prompt-node { width: 520px; }
+  .comparison-node { min-width: 520px; width: 520px; }
+  .comparison-node-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .comparison-node-row .comparison-remove-api { position: absolute; top: 5px; right: 5px; }
   .image-node { width: 300px; }
   .field-grid { grid-template-columns: 1fr; gap: 0; }
   .node-parameters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
