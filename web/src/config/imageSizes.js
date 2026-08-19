@@ -4,6 +4,7 @@ export const AUTO_IMAGE_RESOLUTION = "auto";
 export const SUPPORTED_IMAGE_MODELS = [
   DEFAULT_IMAGE_MODEL,
   "grok-imagine-image",
+  "grok-imagine-image-2.0",
   "grok-imagine-image-quality",
   "gemini-3-pro-image-preview",
   "gemini-3.1-flash-image-preview"
@@ -88,9 +89,10 @@ export const IMAGE_SIZE_CONFIG = {
 };
 
 IMAGE_SIZE_CONFIG["grok-imagine-image-quality"] = IMAGE_SIZE_CONFIG["grok-imagine-image"];
+IMAGE_SIZE_CONFIG["grok-imagine-image-2.0"] = IMAGE_SIZE_CONFIG["grok-imagine-image"];
 
 function isGrokImageModel(model) {
-  return /(^|\/)grok-imagine-image(?:-quality)?$/i.test(String(model || "").trim());
+  return /(^|\/)grok-imagine-image(?:-2\.0|-quality)?$/i.test(String(model || "").trim());
 }
 
 function configForModel(model) {

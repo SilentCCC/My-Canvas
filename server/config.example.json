@@ -13,6 +13,7 @@
       "size": "1024x1024",
       "quality": "high",
       "responseFormat": "url",
+      "referenceImageMode": "file",
       "autoSave": true,
       "outputDir": "output"
     }

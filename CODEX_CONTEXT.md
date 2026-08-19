@@ -27,9 +27,9 @@
 ## 当前开发状态
 
 - 当前版本号：
-  - 统一版本：`V1.0.43`
-  - `package.json` / `package-lock.json`：`1.0.43`
-  - README 显示版本：`V1.0.43`
+  - 统一版本：`V1.1.6`
+  - `package.json` / `package-lock.json`：`1.1.6`
+  - README 显示版本：`V1.1.6`
   - 版本规则：每次代码功能或行为修改时，必须递增补丁版本号；例如 `V1.0.37` 修改后为 `V1.0.38`。同步更新 `package.json`、`package-lock.json`、README、`CHANGELOG.md` 和本文件。仅补充或修正 `CHANGELOG.md` 时不递增版本号。
 
 ### 已完成的功能
@@ -48,6 +48,8 @@
   - 支持导入/导出 JSON 配置。
   - 自动保存输出目录配置。
   - 支持配置服务端图片下载代理开关，默认关闭；开启后兼容 HTTP、HTTPS 和 SOCKS 地址。
+  - 右侧“高级设置”区域集中显示图片下载代理开关、代理端口、返回格式和参考图传输方式；这些选项按 API 配置档独立保存。
+  - 图片下载代理使用 Node.js 原生 HTTP/HTTPS/TLS 流式请求，避免 Windows curl 的 Schannel 凭证错误；支持 HTTP、HTTPS 和 SOCKS 代理。
 - Prompt 节点：
   - 编辑 Prompt。
   - 节点内可选择 API 配置档，直接显示 API1/API2/API3，不显示“当前 API”占位项。
@@ -68,9 +70,12 @@
   - 设置页和 Prompt 节点均使用联动的“分辨率等级 + 比例”选择框。
   - image2 和 Gemini 的尺寸菜单顺序为 `auto`、`1K`、`2K`、`4K`；Grok 菜单为 `auto`、`1K`、`2K`。选择 `auto` 后隐藏比例/具体尺寸选择框；image2/Gemini 发送 `size: "auto"`，Grok 发送 `aspect_ratio: "auto"` 且不发送 `resolution`。
   - GPT image2 和 Gemini 保持原有尺寸行为，生成 API 发送最终的 `size`。
-  - Grok Imagine 使用独立尺寸配置，只提供官方支持的比例及 `1K`、`2K`，生成 API 发送 `aspect_ratio` 与小写的 `resolution`。
+  - Grok Imagine（`grok-imagine-image`、`grok-imagine-image-2.0`、`grok-imagine-image-quality`）使用独立尺寸配置，只提供官方支持的比例及 `1K`、`2K`；Grok 2.0 文生图走 `/images/generations`，单图编辑走 `/images/edits` 并发送 `image: { type: "image_url", url }`，多图编辑发送 `images: [{ type: "image_url", url }]`；参考图支持公开 URL 和 Base64 data URL。其他 Grok 模型继续走原有兼容请求。
   - 选择数据保存为 `resolution`、`ratio`、`width`、`height`、`size`；请求信息窗口按模型显示实际发送的尺寸字段。
   - GPT Image 2 的固定尺寸遵循文档约束：最大边长不超过 `3840`、宽高为 `16` 的倍数、总像素在 `655,360` 到 `8,294,400` 之间、长宽比不超过 `3:1`。
+  - `gpt-image-2` 图生图的 HTTP(S) URL 参考图为实验性兼容模式：单图 JSON 发送 `image_url`，多图发送 `image_urls`；只有所有参考图均为 HTTP(S) URL 时才启用。本地上传或 Base64 参考图继续下载/转换并使用 multipart 文件上传。
+  - 图片左下角叹号保存实际第三方 API 请求信息，包括 URL、方法、脱敏请求头和请求体；右下角叹号显示完整第三方 JSON 结构和非图片字段，Base64 图片内容替换为占位文本。API Key 与本地参考图 Base64 不写入请求记录；写入浏览器缓存时会压缩返回中的 Base64 图片数据，避免存储配额被占满。
+  - API 配置档独立保存 `referenceImageMode`：`file` 为原有 multipart 文件上传，`url` 为 `gpt-image-2` 和 Gemini 图像模型的 HTTP(S) URL 直传实验模式；默认值为 `file`。
   - 尺寸映射独立维护在 `web/src/config/imageSizes.js`。
   - 非 Grok 模型的 Prompt 节点支持“自定义”分辨率，宽高输入范围为 `1` 到 `16384`，请求会发送最终的 `宽x高` 尺寸。
 - 图片节点：
@@ -79,7 +84,7 @@
   - 图片 URL 下载或保存失败时，失败节点提供“重新下载”按钮，复用原始 URL 重试保存。
   - 底部工具栏可创建“效果对比”节点；节点与 Prompt 节点处于同一画布层级，支持拖动、缩放、删除和连线。
   - 效果对比节点按行配置 API、模型、尺寸、比例和质量；加号可动态增加对比行。
-  - 效果对比节点生成后按行顺序创建图片节点，图片节点纵向排列并分别连回效果对比节点。
+  - 效果对比节点生成后按行顺序从左到右创建图片节点，并分别连回效果对比节点。
   - 支持拖动、缩放、打开、下载、删除。
   - 双击图片可放大预览。
   - 放大预览支持鼠标滚轮缩放，图生图结果支持原图/生成图分割对比，分割线可跟随光标移动。
@@ -628,6 +633,11 @@ fix: allow copying image response details
   - 画布图生图请求未发送文档示例中的 `response_format: "b64_json"`。
   - 文档只展示单个 `image` 字段，尚未确认重复提交 5 个 `image` 字段是否被第三方支持。
 - 下一步计划：先保留完整原始响应，确认 API 返回协议后，再决定是否统一改为 `b64_json`；不要猜测异步查询接口路径。
+
+### 原始响应字段说明
+
+- 不同第三方 API 的 JSON 响应字段可能差异很大。image2 通常会返回 `revised_prompt`、`moderation`、`output_format`、`quality`、`size` 和 Token 用量；Grok 通常只返回图片 `url`、`mime_type` 和费用信息。
+- 返回信息窗口展示服务商实际返回的完整非 Base64 字段；缺失的尺寸、质量或用量字段不能由画布从原始响应中补出。
 - 建议提交信息：
 ```text
 docs: record third-party image API compatibility findings

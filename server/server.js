@@ -1,9 +1,8 @@
 import express from "express";
-import { spawn } from "node:child_process";
 import http from "node:http";
 import fs from "node:fs/promises";
 import https from "node:https";
-import os from "node:os";
+import net from "node:net";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,10 +35,9 @@ function normalizeImageDownloadProxy(value) {
 function normalizeImageDownloadProxyEnabled(value) {
   return value === true || value === "true";
 }
-function configuredImageDownloadProxy() {
-  const settings = readAppSettings();
-  if (!normalizeImageDownloadProxyEnabled(settings.imageDownloadProxyEnabled)) return "";
-  try { return normalizeImageDownloadProxy(settings.imageDownloadProxy); } catch { return ""; }
+function configuredImageDownloadProxy(profile) {
+  if (!profile || !normalizeImageDownloadProxyEnabled(profile.imageDownloadProxyEnabled)) return "";
+  try { return normalizeImageDownloadProxy(profile.imageDownloadProxy); } catch { return ""; }
 }
 const port = configuredPort(readAppSettings().port);
 const defaultOutputDir = path.join(projectRoot, "output");
@@ -67,7 +65,10 @@ const defaultProfile = {
   size: "1024x1024",
   quality: "high",
   responseFormat: "url",
-  outputDir: defaultOutputDir
+  referenceImageMode: "file",
+  outputDir: defaultOutputDir,
+  imageDownloadProxyEnabled: false,
+  imageDownloadProxy: ""
 };
 
 function cleanEndpoint(endpoint) {
@@ -90,7 +91,43 @@ function modelsUrl(endpoint) {
 }
 
 function isGrokImageModel(model) {
-  return /(^|\/)grok-imagine-image(?:-quality)?$/i.test(String(model || "").trim());
+  return /(^|\/)grok-imagine-image(?:-2\.0|-quality)?$/i.test(String(model || "").trim());
+}
+
+function isGrokImageJsonModel(model) {
+  return /(^|\/)grok-imagine-image-2\.0$/i.test(String(model || "").trim());
+}
+
+function isGptImage2Model(model) {
+  return /(^|\/)gpt-image-2$/i.test(String(model || "").trim());
+}
+
+function isGeminiImageModel(model) {
+  return /(^|\/)(?:gemini-3-pro-image-preview|gemini-3\.1-flash-image-preview)$/i.test(String(model || "").trim());
+}
+
+function isHttpImageUrl(value) {
+  return /^https?:\/\//i.test(String(value || "").trim());
+}
+
+function imageUrlReferenceFields(referenceImages) {
+  return referenceImages.length === 1 ? { image_url: referenceImages[0] } : { image_urls: referenceImages };
+}
+
+function imageRequestText(url, contentType, body) {
+  return JSON.stringify({
+    url,
+    method: "POST",
+    headers: { Authorization: "Bearer [hidden]", "Content-Type": contentType },
+    body
+  }, null, 2);
+}
+
+function referenceImageRequestValue(value, index) {
+  const source = String(value || "").trim();
+  if (/^https?:\/\//i.test(source)) return source;
+  if (source.startsWith("data:")) return `[local Base64 reference image ${index + 1}]`;
+  return `[reference image ${index + 1}]`;
 }
 
 function grokAspectRatio(ratio) {
@@ -106,6 +143,16 @@ function grokResolution(resolution) {
 function grokRequestSizeFields(ratio, resolution) {
   const aspectRatio = grokAspectRatio(ratio);
   return { aspect_ratio: aspectRatio, ...(aspectRatio === "auto" ? {} : { resolution: grokResolution(resolution) }) };
+}
+
+function grokQualityField(model, quality) {
+  if (!isGrokImageJsonModel(model)) return {};
+  return quality === "low" || quality === "medium" ? { quality } : {};
+}
+
+function grokReferenceImageFields(referenceImages) {
+  const images = referenceImages.map((url) => ({ type: "image_url", url }));
+  return images.length === 1 ? { image: images[0] } : { images };
 }
 
 function modelIdsFromPayload(payload) {
@@ -227,18 +274,28 @@ function sanitizeProfile(profile, index = 0) {
     size: String(source.size || defaultProfile.size).trim() || defaultProfile.size,
     quality: String(source.quality || defaultProfile.quality).trim() || defaultProfile.quality,
     responseFormat: source.responseFormat === "b64_json" ? "b64_json" : "url",
-    outputDir: requestedOutputDir && requestedOutputDir !== legacyDefaultOutputDir ? requestedOutputDir : defaultProfile.outputDir
+    referenceImageMode: source.referenceImageMode === "url" ? "url" : "file",
+    outputDir: requestedOutputDir && requestedOutputDir !== legacyDefaultOutputDir ? requestedOutputDir : defaultProfile.outputDir,
+    imageDownloadProxyEnabled: normalizeImageDownloadProxyEnabled(source.imageDownloadProxyEnabled),
+    imageDownloadProxy: String(source.imageDownloadProxy || "").trim()
   };
 }
 
-function normalizeConfig(raw) {
+function normalizeConfig(raw, legacySettings = null) {
   if (Array.isArray(raw?.profiles) && raw.profiles.length) {
-    const profiles = raw.profiles.map(sanitizeProfile);
-    const activeProfileId = profiles.some((profile) => profile.id === raw.activeProfileId) ? raw.activeProfileId : profiles[0].id;
+    const activeProfileId = raw.profiles.some((profile) => profile?.id === raw.activeProfileId) ? raw.activeProfileId : String(raw.profiles[0]?.id || "profile-1");
+    const profiles = raw.profiles.map((profile, index) => {
+      const sanitized = sanitizeProfile(profile, index);
+      const hasProxyConfig = Object.hasOwn(profile || {}, "imageDownloadProxyEnabled") || Object.hasOwn(profile || {}, "imageDownloadProxy");
+      if (!legacySettings || sanitized.id !== activeProfileId || hasProxyConfig) return sanitized;
+      return { ...sanitized, imageDownloadProxyEnabled: normalizeImageDownloadProxyEnabled(legacySettings.imageDownloadProxyEnabled), imageDownloadProxy: String(legacySettings.imageDownloadProxy || "").trim() };
+    });
     return { profiles, activeProfileId };
   }
+  const profile = sanitizeProfile({ ...raw, id: "default", name: raw?.name || defaultProfile.name });
+  const hasProxyConfig = Object.hasOwn(raw || {}, "imageDownloadProxyEnabled") || Object.hasOwn(raw || {}, "imageDownloadProxy");
   return {
-    profiles: [sanitizeProfile({ ...raw, id: "default", name: raw?.name || defaultProfile.name })],
+    profiles: [legacySettings && !hasProxyConfig ? { ...profile, imageDownloadProxyEnabled: normalizeImageDownloadProxyEnabled(legacySettings.imageDownloadProxyEnabled), imageDownloadProxy: String(legacySettings.imageDownloadProxy || "").trim() } : profile],
     activeProfileId: "default"
   };
 }
@@ -250,7 +307,7 @@ async function writeConfig(state) {
 async function readConfig() {
   try {
     const raw = JSON.parse(await fs.readFile(configPath, "utf8"));
-    const state = normalizeConfig(raw);
+    const state = normalizeConfig(raw, readAppSettings());
     if (JSON.stringify(raw) !== JSON.stringify(state)) await writeConfig(state);
     return state;
   } catch {
@@ -277,19 +334,19 @@ function publicProfile(profile) {
     size: profile.size,
     quality: profile.quality,
     responseFormat: profile.responseFormat,
+    referenceImageMode: profile.referenceImageMode,
     outputDir: profile.outputDir,
+    imageDownloadProxyEnabled: Boolean(profile.imageDownloadProxyEnabled),
+    imageDownloadProxy: profile.imageDownloadProxy || "",
     hasApiKey: Boolean(profile.apiKey)
   };
 }
 
 function publicConfig(state) {
   const active = activeProfile(state);
-  const appSettings = readAppSettings();
   return {
     activeProfileId: active.id,
     profiles: state.profiles.map(publicProfile),
-    imageDownloadProxyEnabled: normalizeImageDownloadProxyEnabled(appSettings.imageDownloadProxyEnabled),
-    imageDownloadProxy: String(appSettings.imageDownloadProxy || ""),
     ...publicProfile(active)
   };
 }
@@ -387,39 +444,172 @@ function requestRemoteImage(imageUrl, timeoutMs, redirectCount = 0) {
   });
 }
 
-async function requestRemoteImageWithCurl(imageUrl, timeoutMs, proxyUrl = "") {
-  const temporaryDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "ai-canvas-image-"));
-  const temporaryFile = path.join(temporaryDirectory, "download.bin");
-  const curlCommand = process.platform === "win32" ? "curl.exe" : "curl";
+function proxyPort(parsed) {
+  return Number(parsed.port || (parsed.protocol === "https:" ? 443 : 80));
+}
+
+function proxyAuthorization(parsed) {
+  if (!parsed.username && !parsed.password) return undefined;
+  return `Basic ${Buffer.from(`${decodeURIComponent(parsed.username)}:${decodeURIComponent(parsed.password)}`).toString("base64")}`;
+}
+
+function readSocketBytes(socket, expectedLength, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let buffer = Buffer.alloc(0);
+    let timer;
+    const cleanup = () => {
+      clearTimeout(timer);
+      socket.off("data", onData);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+    };
+    const fail = (error) => { cleanup(); reject(error); };
+    const onData = (chunk) => {
+      buffer = Buffer.concat([buffer, chunk]);
+      if (buffer.length < expectedLength) return;
+      const result = buffer.subarray(0, expectedLength);
+      const remainder = buffer.subarray(expectedLength);
+      cleanup();
+      if (remainder.length) socket.unshift(remainder);
+      resolve(result);
+    };
+    const onError = (error) => fail(error);
+    const onClose = () => fail(new Error("代理连接已关闭。"));
+    socket.on("data", onData);
+    socket.once("error", onError);
+    socket.once("close", onClose);
+    timer = setTimeout(() => fail(new Error(`代理连接超时（${Math.round(timeoutMs / 1000)} 秒）。`)), timeoutMs);
+  });
+}
+
+async function connectSocksProxy(proxy, target, timeoutMs) {
+  const socket = net.createConnection({ host: proxy.hostname, port: proxyPort(proxy) });
+  const timeout = setTimeout(() => socket.destroy(new Error(`代理连接超时（${Math.round(timeoutMs / 1000)} 秒）。`)), timeoutMs);
   try {
-    const result = await new Promise((resolve, reject) => {
-      const args = [
-        "--location", "--fail", "--silent", "--show-error",
-        "--max-time", String(Math.ceil(timeoutMs / 1000)),
-        "--user-agent", imageDownloadHeaders["User-Agent"],
-        "--header", `Accept: ${imageDownloadHeaders.Accept}`,
-        ...(proxyUrl ? ["--proxy", proxyUrl] : []),
-        "--output", temporaryFile,
-        "--write-out", "%{content_type}",
-        imageUrl
-      ];
-      const child = spawn(curlCommand, args, { windowsHide: true });
-      let stdout = "";
-      let stderr = "";
-      child.stdout.on("data", (chunk) => { stdout += chunk.toString(); });
-      child.stderr.on("data", (chunk) => { stderr += chunk.toString(); });
-      child.once("error", reject);
-      child.once("close", (code) => code === 0 ? resolve({ contentType: stdout.trim() }) : reject(new Error(stderr.trim() || `curl exited with code ${code}.`)));
+    await new Promise((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("error", reject);
     });
-    const buffer = await fs.readFile(temporaryFile);
-    if (!buffer.length) throw new Error("curl returned an empty image.");
-    return { buffer, contentType: result.contentType || "image/png" };
+    if (proxy.protocol === "socks5:" || proxy.protocol === "socks5h:") {
+      const hasAuth = Boolean(proxy.username || proxy.password);
+      socket.write(Buffer.from([5, hasAuth ? 2 : 1, ...(hasAuth ? [0, 2] : [0])]));
+      const greeting = await readSocketBytes(socket, 2, timeoutMs);
+      if (greeting[0] !== 5 || greeting[1] === 255) throw new Error("SOCKS5 代理不接受当前认证方式。");
+      if (greeting[1] === 2) {
+        const username = Buffer.from(decodeURIComponent(proxy.username));
+        const password = Buffer.from(decodeURIComponent(proxy.password));
+        if (username.length > 255 || password.length > 255) throw new Error("SOCKS5 代理账号或密码过长。");
+        socket.write(Buffer.concat([Buffer.from([1, username.length]), username, Buffer.from([password.length]), password]));
+        const authResult = await readSocketBytes(socket, 2, timeoutMs);
+        if (authResult[1] !== 0) throw new Error("SOCKS5 代理认证失败。");
+      }
+      const hostname = Buffer.from(target.hostname);
+      const address = Buffer.concat([Buffer.from([5, 1, 0, 3, hostname.length]), hostname, Buffer.from([(target.port || (target.protocol === "https:" ? 443 : 80)) >> 8, (target.port || (target.protocol === "https:" ? 443 : 80)) & 255])]);
+      socket.write(address);
+      const reply = await readSocketBytes(socket, 4, timeoutMs);
+      if (reply[0] !== 5 || reply[1] !== 0) throw new Error(`SOCKS5 代理连接失败（状态码 ${reply[1]}）。`);
+      const addressLength = reply[3] === 1 ? 4 : reply[3] === 4 ? 16 : (await readSocketBytes(socket, 1, timeoutMs))[0];
+      await readSocketBytes(socket, addressLength + 2, timeoutMs);
+      return socket;
+    }
+    const targetPort = target.port || (target.protocol === "https:" ? 443 : 80);
+    let address;
+    if (proxy.protocol === "socks4:") {
+      const ipv4 = target.hostname.split(".").map((part) => Number(part));
+      if (ipv4.length !== 4 || ipv4.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) throw new Error("SOCKS4 代理需要 IPv4 目标地址。");
+      address = Buffer.from(ipv4);
+    } else {
+      address = Buffer.from([0, 0, 0, 1]);
+    }
+    const username = Buffer.from(decodeURIComponent(proxy.username || ""));
+    const hostname = proxy.protocol === "socks4a:" ? Buffer.from(target.hostname) : Buffer.alloc(0);
+    socket.write(Buffer.concat([Buffer.from([4, 1, targetPort >> 8, targetPort & 255]), address, username, Buffer.from([0]), hostname, Buffer.from([0])]));
+    const reply = await readSocketBytes(socket, 8, timeoutMs);
+    if (reply[1] !== 90) throw new Error(`SOCKS4 代理连接失败（状态码 ${reply[1]}）。`);
+    return socket;
+  } catch (error) {
+    socket.destroy();
+    throw error;
   } finally {
-    await fs.rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
+    clearTimeout(timeout);
   }
 }
 
-async function saveImageToDisk(imageUrl, model, outputDir) {
+function connectHttpProxy(proxy, target, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const transport = proxy.protocol === "https:" ? https : http;
+    const request = transport.request({
+      hostname: proxy.hostname,
+      port: proxyPort(proxy),
+      method: "CONNECT",
+      path: `${target.hostname}:${target.port || (target.protocol === "https:" ? 443 : 80)}`,
+      headers: { Host: `${target.hostname}:${target.port || (target.protocol === "https:" ? 443 : 80)}`, ...(proxyAuthorization(proxy) ? { "Proxy-Authorization": proxyAuthorization(proxy) } : {}) },
+      rejectUnauthorized: true
+    });
+    const timer = setTimeout(() => request.destroy(new Error(`代理连接超时（${Math.round(timeoutMs / 1000)} 秒）。`)), timeoutMs);
+    request.once("connect", (response, socket, head) => {
+      clearTimeout(timer);
+      if (response.statusCode !== 200) {
+        socket.destroy();
+        reject(new Error(`HTTP 代理连接失败（状态码 ${response.statusCode || "unknown"}）。`));
+        return;
+      }
+      if (head?.length) socket.unshift(head);
+      resolve(socket);
+    });
+    request.once("error", (error) => { clearTimeout(timer); reject(error); });
+    request.end();
+  });
+}
+
+async function requestRemoteImageWithProxy(imageUrl, timeoutMs, proxyUrl, redirectCount = 0) {
+  if (redirectCount > 5) throw new Error("图片下载重定向次数过多。");
+  const target = new URL(imageUrl);
+  const proxy = new URL(proxyUrl);
+  if (!["http:", "https:"].includes(target.protocol)) throw new Error("图片 URL 只支持 HTTP 或 HTTPS。");
+  if (!["http:", "https:", "socks4:", "socks4a:", "socks5:", "socks5h:"].includes(proxy.protocol)) throw new Error("图片下载代理协议不受支持。");
+  const socket = proxy.protocol.startsWith("socks") ? await connectSocksProxy(proxy, target, timeoutMs) : await connectHttpProxy(proxy, target, timeoutMs);
+  return new Promise((resolve, reject) => {
+    const transport = target.protocol === "https:" ? https : http;
+    const request = transport.request({
+      hostname: target.hostname,
+      port: target.port || (target.protocol === "https:" ? 443 : 80),
+      path: `${target.pathname || "/"}${target.search || ""}`,
+      method: "GET",
+      headers: imageDownloadHeaders,
+      agent: false,
+      socket
+    }, (response) => {
+      const status = Number(response.statusCode || 0);
+      if (status >= 300 && status < 400 && response.headers.location) {
+        response.resume();
+        socket.destroy();
+        const redirectedUrl = new URL(response.headers.location, target).toString();
+        requestRemoteImageWithProxy(redirectedUrl, timeoutMs, proxyUrl, redirectCount + 1).then(resolve, reject);
+        return;
+      }
+      if (status < 200 || status >= 300) {
+        response.resume();
+        reject(new Error(`Image download returned ${status || "unknown status"}.`));
+        return;
+      }
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => {
+        const buffer = Buffer.concat(chunks);
+        resolve({ buffer, contentType: response.headers["content-type"] || "image/png" });
+      });
+      response.on("error", reject);
+    });
+    const timer = setTimeout(() => request.destroy(new Error(`图片下载超时（${Math.round(timeoutMs / 1000)} 秒）。`)), timeoutMs);
+    request.setTimeout(timeoutMs, () => request.destroy(new Error(`图片下载超时（${Math.round(timeoutMs / 1000)} 秒）。`)));
+    request.once("close", () => clearTimeout(timer));
+    request.once("error", (error) => { clearTimeout(timer); reject(error); });
+    request.end();
+  });
+}
+
+async function saveImageToDisk(imageUrl, model, outputDir, imageDownloadProxy = "") {
   let buffer;
   let extension = "png";
   let imageDownloadDurationMs = 0;
@@ -431,12 +621,12 @@ async function saveImageToDisk(imageUrl, model, outputDir) {
   } else {
     const downloadStartedAt = Date.now();
     let remoteImage;
-    const proxyUrl = configuredImageDownloadProxy();
+    const proxyUrl = imageDownloadProxy;
     if (proxyUrl) {
       try {
-        remoteImage = await requestRemoteImageWithCurl(imageUrl, imageDownloadTimeoutMs, proxyUrl);
+        remoteImage = await requestRemoteImageWithProxy(imageUrl, imageDownloadTimeoutMs, proxyUrl);
       } catch (error) {
-        throw new Error(`通过图片下载代理失败：${error.message || "curl failed"}`);
+        throw new Error(`通过图片下载代理失败：${error.message || "proxy download failed"}`);
       }
     } else try {
       remoteImage = await requestRemoteImage(imageUrl, imageDownloadTimeoutMs);
@@ -453,11 +643,7 @@ async function saveImageToDisk(imageUrl, model, outputDir) {
         }
       } catch (fetchError) {
         if (fetchError?.name === "AbortError") throw new Error(`图片下载超时（${Math.round(imageDownloadTimeoutMs / 1000)} 秒）。`);
-        try {
-          remoteImage = await requestRemoteImageWithCurl(imageUrl, imageDownloadTimeoutMs);
-        } catch (curlError) {
-          throw new Error(`${nativeError.message || "Native image download failed."}; fetch fallback: ${fetchError.message || "fetch failed"}; curl fallback: ${curlError.message || "curl failed"}`);
-        }
+        throw new Error(`${nativeError.message || "Native image download failed."}; fetch fallback: ${fetchError.message || "fetch failed"}`);
       }
     }
     const contentType = remoteImage.contentType || "image/png";
@@ -488,7 +674,7 @@ function saveImageJob(jobId) {
       if (!current || current.status === "completed" || current.status === "browser-saving") return;
       imageSaveJobs.set(jobId, { ...current, status: "server-saving", downloadAttempt: attempt + 1 });
       try {
-        const savedImage = await saveImageToDisk(current.sourceImageUrl, current.model, current.outputDir);
+        const savedImage = await saveImageToDisk(current.sourceImageUrl, current.model, current.outputDir, current.imageDownloadProxy);
         imageSaveJobs.set(jobId, { status: "completed", sourceImageUrl: current.sourceImageUrl, savedPath: savedImage.filePath, localImageUrl: localImageUrl(savedImage.filePath), fileSize: savedImage.fileSize, imageDownloadDurationMs: savedImage.imageDownloadDurationMs, localWriteDurationMs: savedImage.localWriteDurationMs, downloadAttempt: attempt + 1, updatedAt: Date.now() });
         return;
       } catch (error) {
@@ -545,6 +731,10 @@ app.post("/api/config", async (req, res) => {
   const body = req.body || {};
   const profileId = String(body.profileId || state.activeProfileId);
   const current = state.profiles.find((profile) => profile.id === profileId) || activeProfile(state);
+  let imageDownloadProxy = Object.hasOwn(body, "imageDownloadProxy") ? String(body.imageDownloadProxy || "").trim() : current.imageDownloadProxy;
+  if (Object.hasOwn(body, "imageDownloadProxy")) {
+    try { normalizeImageDownloadProxy(imageDownloadProxy); } catch (error) { return res.status(400).json({ ok: false, error: error.message || "图片下载代理无效。" }); }
+  }
   const next = sanitizeProfile({
     ...current,
     id: current.id,
@@ -558,27 +748,17 @@ app.post("/api/config", async (req, res) => {
     size: body.size ?? current.size,
     quality: body.quality ?? current.quality,
     responseFormat: body.responseFormat ?? current.responseFormat,
+    referenceImageMode: body.referenceImageMode ?? current.referenceImageMode,
     outputDir: body.outputDir ?? current.outputDir,
-    apiKey: typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey : current.apiKey
+    apiKey: typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey : current.apiKey,
+    imageDownloadProxyEnabled: Object.hasOwn(body, "imageDownloadProxyEnabled") ? body.imageDownloadProxyEnabled : current.imageDownloadProxyEnabled,
+    imageDownloadProxy
   });
-  let normalizedImageDownloadProxy;
-  if (Object.hasOwn(body, "imageDownloadProxy")) {
-    try {
-      normalizedImageDownloadProxy = normalizeImageDownloadProxy(body.imageDownloadProxy);
-    } catch (error) {
-      return res.status(400).json({ ok: false, error: error.message || "图片下载代理无效。" });
-    }
-  }
-  const appSettings = readAppSettings();
-  const imageDownloadProxyEnabled = Object.hasOwn(body, "imageDownloadProxyEnabled")
-    ? normalizeImageDownloadProxyEnabled(body.imageDownloadProxyEnabled)
-    : normalizeImageDownloadProxyEnabled(appSettings.imageDownloadProxyEnabled);
   const index = state.profiles.findIndex((profile) => profile.id === current.id);
   if (index >= 0) state.profiles[index] = next;
   else state.profiles.push(next);
   state.activeProfileId = next.id;
   await writeConfig(state);
-  if (Object.hasOwn(body, "imageDownloadProxy") || Object.hasOwn(body, "imageDownloadProxyEnabled")) await writeAppSettings({ ...appSettings, imageDownloadProxy: Object.hasOwn(body, "imageDownloadProxy") ? String(body.imageDownloadProxy || "").trim() : appSettings.imageDownloadProxy, imageDownloadProxyEnabled });
   res.json({ ok: true, config: publicConfig(state) });
 });
 
@@ -670,11 +850,45 @@ app.post("/api/generate", async (req, res) => {
   const quality = ["low", "medium", "high"].includes(requestedQuality) ? requestedQuality : "";
   const responseFormat = config.responseFormat === "url" ? "url" : "b64_json";
   const referenceImages = (Array.isArray(req.body?.referenceImages) ? req.body.referenceImages : [req.body?.referenceImage]).map((value) => String(value || "").trim()).filter(Boolean).slice(0, 5);
+  const grokJsonModel = isGrokImageJsonModel(model);
+  let requestText = "";
   try {
     const apiRequestStartedAt = Date.now();
     let response;
     let bodyText;
-    if (referenceImages.length) {
+    if (grokJsonModel && referenceImages.length) {
+      const requestBody = {
+        model,
+        prompt,
+        ...grokReferenceImageFields(referenceImages),
+        ...grokRequestSizeFields(ratio, resolution),
+        ...grokQualityField(model, quality),
+        ...(responseFormat === "b64_json" ? { response_format: "b64_json" } : {})
+      };
+      requestText = imageRequestText(generationUrl(config.endpoint), "application/json", requestBody);
+      ({ response, bodyText } = await fetchImageGeneration(generationUrl(config.endpoint), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody)
+      }));
+    } else if ((isGptImage2Model(model) || isGeminiImageModel(model)) && config.referenceImageMode === "url" && referenceImages.length && referenceImages.every(isHttpImageUrl)) {
+      const requestBody = {
+        model,
+        prompt,
+        ...imageUrlReferenceFields(referenceImages),
+        size,
+        ...(quality ? { quality } : {}),
+        ...verifiedImageResponseOptions,
+        response_format: responseFormat,
+        ...(responseFormat === "url" ? { output_format: "png" } : {})
+      };
+      requestText = imageRequestText(editsUrl(config.endpoint), "application/json", requestBody);
+      ({ response, bodyText } = await fetchImageGeneration(editsUrl(config.endpoint), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody)
+      }));
+    } else if (referenceImages.length) {
       const form = new FormData();
       form.append("model", model);
       form.append("prompt", prompt);
@@ -683,16 +897,26 @@ app.post("/api/generate", async (req, res) => {
       } else {
         form.append("size", size);
       }
-      if (quality) form.append("quality", quality);
+      if (quality && !grokModel) form.append("quality", quality);
       form.append("response_format", responseFormat);
+      const imageField = grokModel && referenceImages.length > 1 ? "image[]" : "image";
       for (const [index, referenceImage] of referenceImages.entries()) {
-        form.append("image", await imageBlobFromInput(referenceImage), `reference-${index + 1}.png`);
+        form.append(imageField, await imageBlobFromInput(referenceImage), `reference-${index + 1}.png`);
       }
+      requestText = imageRequestText(editsUrl(config.endpoint), "multipart/form-data", {
+        model,
+        prompt,
+        ...(grokModel ? grokRequestSizeFields(ratio, resolution) : { size }),
+        ...(quality && !grokModel ? { quality } : {}),
+        response_format: responseFormat,
+        [imageField]: referenceImages.map(referenceImageRequestValue)
+      });
       ({ response, bodyText } = await fetchImageGeneration(editsUrl(config.endpoint), { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form }));
     } else {
       const requestBody = grokModel
-        ? { model, prompt, ...grokRequestSizeFields(ratio, resolution), ...(quality ? { quality } : {}), ...verifiedImageResponseOptions, response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) }
+        ? { model, prompt, ...grokRequestSizeFields(ratio, resolution), ...(grokJsonModel ? grokQualityField(model, quality) : (quality ? { quality } : {})), ...(grokJsonModel ? {} : verifiedImageResponseOptions), ...(grokJsonModel ? (responseFormat === "b64_json" ? { response_format: "b64_json" } : {}) : { response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) }) }
         : { model, prompt, size, ...(quality ? { quality } : {}), ...verifiedImageResponseOptions, response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) };
+      requestText = imageRequestText(generationUrl(config.endpoint), "application/json", requestBody);
       ({ response, bodyText } = await fetchImageGeneration(generationUrl(config.endpoint), {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -704,18 +928,18 @@ app.post("/api/generate", async (req, res) => {
     const responseText = providerResponseText(payload, bodyText);
     const rawResponseText = responseText;
     const apiRequestDurationMs = Date.now() - apiRequestStartedAt;
-    if (!response.ok) return res.status(response.status).json({ ok: false, error: payload?.error?.message || `Image generation returned ${response.status}.`, responseText, rawResponseText });
+    if (!response.ok) return res.status(response.status).json({ ok: false, error: payload?.error?.message || `Image generation returned ${response.status}.`, requestText, responseText, rawResponseText });
     const imageUrl = getImageFromPayload(payload);
-    if (!imageUrl) return res.status(502).json({ ok: false, error: "\u670d\u52a1\u5546\u6ca1\u6709\u8fd4\u56de\u56fe\u7247 URL \u6216 base64 \u56fe\u7247\u3002", responseText, rawResponseText });
+    if (!imageUrl) return res.status(502).json({ ok: false, error: "\u670d\u52a1\u5546\u6ca1\u6709\u8fd4\u56de\u56fe\u7247 URL \u6216 base64 \u56fe\u7247\u3002", requestText, responseText, rawResponseText });
     const sourceImageUrl = imageUrl;
     const saveJobId = `save-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    imageSaveJobs.set(saveJobId, { status: "pending", sourceImageUrl, model, outputDir: config.outputDir, createdAt: Date.now() });
+    imageSaveJobs.set(saveJobId, { status: "pending", sourceImageUrl, model, outputDir: config.outputDir, imageDownloadProxy: configuredImageDownloadProxy(config), createdAt: Date.now() });
     void saveImageJob(saveJobId);
-    res.json({ ok: true, imageUrl: sourceImageUrl, sourceImageUrl, saveJobId, saveStatus: "pending", revisedPrompt: payload?.data?.[0]?.revised_prompt || "", apiRequestDurationMs, responseText, rawResponseText });
+    res.json({ ok: true, imageUrl: sourceImageUrl, sourceImageUrl, saveJobId, saveStatus: "pending", revisedPrompt: payload?.data?.[0]?.revised_prompt || "", apiRequestDurationMs, requestText, responseText, rawResponseText });
   } catch (error) {
-    if (error?.code === "IMAGE_GENERATION_TIMEOUT") return res.status(504).json({ ok: false, error: error.message, responseText: error.message, rawResponseText: "" });
+    if (error?.code === "IMAGE_GENERATION_TIMEOUT") return res.status(504).json({ ok: false, error: error.message, requestText, responseText: error.message, rawResponseText: "" });
     const errorMessage = error.message || "\u65e0\u6cd5\u8fde\u63a5\u56fe\u7247\u670d\u52a1\u5546\u3002";
-    res.status(502).json({ ok: false, error: errorMessage, responseText: errorMessage, rawResponseText: "" });
+    res.status(502).json({ ok: false, error: errorMessage, requestText, responseText: errorMessage, rawResponseText: "" });
   }
 });
 
@@ -748,7 +972,7 @@ app.post("/api/image-save-upload/:jobId", async (req, res) => {
   if (!/^data:image\/[a-z0-9.+-]+;base64,/i.test(imageData)) return res.status(400).json({ ok: false, error: "Invalid image data." });
   imageSaveJobs.set(jobId, { ...job, status: "browser-saving" });
   try {
-    const savedImage = await saveImageToDisk(imageData, job.model, job.outputDir);
+    const savedImage = await saveImageToDisk(imageData, job.model, job.outputDir, job.imageDownloadProxy);
     const completed = { status: "completed", savedPath: savedImage.filePath, localImageUrl: localImageUrl(savedImage.filePath), fileSize: savedImage.fileSize, imageDownloadDurationMs: Number.isFinite(browserDownloadDurationMs) && browserDownloadDurationMs >= 0 ? browserDownloadDurationMs : 0, localWriteDurationMs: savedImage.localWriteDurationMs, updatedAt: Date.now() };
     imageSaveJobs.set(jobId, completed);
     res.json({ ok: true, ...completed });
@@ -783,10 +1007,13 @@ app.get("/api/image-proxy", async (req, res) => {
   try { parsed = new URL(String(req.query.url || "")); } catch { return res.status(400).send("Invalid image URL."); }
   if (!/^https?:$/.test(parsed.protocol)) return res.status(400).send("Only http(s) image URLs are supported.");
   try {
-    const proxyUrl = configuredImageDownloadProxy();
+    const state = await readConfig();
+    const profileId = String(req.query.profileId || state.activeProfileId);
+    const profile = state.profiles.find((item) => item.id === profileId) || activeProfile(state);
+    const proxyUrl = configuredImageDownloadProxy(profile);
     let image;
     if (proxyUrl) {
-      image = await requestRemoteImageWithCurl(parsed.toString(), imageDownloadTimeoutMs, proxyUrl);
+      image = await requestRemoteImageWithProxy(parsed.toString(), imageDownloadTimeoutMs, proxyUrl);
     } else {
       try {
         image = await requestRemoteImage(parsed.toString(), imageDownloadTimeoutMs);

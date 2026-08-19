@@ -131,8 +131,13 @@ const cn = {
   appendEndpoint: "\u670d\u52a1\u7aef\u4f1a\u5728\u9700\u8981\u65f6\u81ea\u52a8\u8865\u4e0a",
   imageDownloadProxy: "\u56fe\u7247\u4e0b\u8f7d\u4ee3\u7406",
   imageDownloadProxyEnabled: "图片下载代理开关",
+  advancedSettings: "高级设置",
+  advancedSettingsIntro: "下载、返回和参考图传输选项。",
   imageDownloadProxyPort: "\u4ee3\u7406\u7aef\u53e3",
   imageDownloadProxyHint: "\u53ef\u76f4\u63a5\u586b\u5199\u7aef\u53e3\uff08\u5982 7890\uff09\uff0c\u4e5f\u652f\u6301\u5b8c\u6574 HTTP/HTTPS/SOCKS \u5730\u5740\u3002",
+  referenceImageMode: "参考图传输方式",
+  referenceImageModeFile: "文件上传（原模式）",
+  referenceImageModeUrl: "HTTP(S) 图片 URL",
   apiKey: "API Key",
   keepSavedKey: "\u7559\u7a7a\u4ee5\u4fdd\u7559\u5df2\u4fdd\u5b58\u7684\u5bc6\u94a5",
   keyNote: "\u7531\u672c\u5730 Node \u670d\u52a1\u4fdd\u5b58\uff0c\u6d4f\u89c8\u5668\u4e0d\u4f1a\u8bfb\u53d6\u5bc6\u94a5\u539f\u6587\u3002",
@@ -307,10 +312,26 @@ function loadCanvasState() {
   return { activeId: "canvas-1", canvases: [{ id: "canvas-1", name: "\u672a\u547d\u540d\u753b\u5e03", nodes: initialNodes, edges: [] }] };
 }
 
+function compactResponseTextForStorage(value) {
+  const text = String(value || "");
+  if (!text) return text;
+  try {
+    const payload = JSON.parse(text);
+    return JSON.stringify(payload, (key, nestedValue) => {
+      if (/^(b64_json|b64Json|base64)$/i.test(key)) return "[image data omitted from local cache]";
+      if (typeof nestedValue === "string" && /^data:image\//i.test(nestedValue) && nestedValue.length > 512) return "[image data omitted from local cache]";
+      return nestedValue;
+    }, 2);
+  } catch {
+    return text.length > 200000 ? `${text.slice(0, 200000)}\n[response truncated in local cache]` : text;
+  }
+}
+
 function persistHistorySafely(items) {
+  const storageItems = items.map((item) => ({ ...item, responseText: compactResponseTextForStorage(item.responseText), rawResponseText: compactResponseTextForStorage(item.rawResponseText) }));
   for (let length = items.length; length >= 0; length -= 1) {
     try {
-      localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, length)));
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(storageItems.slice(0, length)));
       return;
     } catch {
       // Base64 images can exceed the browser quota; retry with fewer old entries.
@@ -357,7 +378,7 @@ function generatedImageFilename(model) {
 }
 
 function isGrokImageModel(model) {
-  return /(^|\/)grok-imagine-image(?:-quality)?$/i.test(String(model || "").trim());
+  return /(^|\/)grok-imagine-image(?:-2\.0|-quality)?$/i.test(String(model || "").trim());
 }
 
 function dataUrlByteSize(value) {
@@ -367,9 +388,9 @@ function dataUrlByteSize(value) {
   return Math.max(0, Math.floor(match[1].length * 0.75) - padding);
 }
 
-function displayImageSource(value) {
+function displayImageSource(value, profileId = "") {
   const source = String(value || "");
-  return /^https?:\/\//i.test(source) ? `/api/image-proxy?url=${encodeURIComponent(source)}` : source;
+  return /^https?:\/\//i.test(source) ? `/api/image-proxy?url=${encodeURIComponent(source)}${profileId ? `&profileId=${encodeURIComponent(profileId)}` : ""}` : source;
 }
 
 function PromptNode({ id, data, selected }) {
@@ -520,7 +541,7 @@ function ImageNode({ id, data, selected }) {
   const displayedImageSize = actualSize.width && actualSize.height ? `${actualSize.width}x${actualSize.height}` : (data.size || "1024x1024");
   const generationDuration = Number(data.generationDurationMs) > 0 ? formatDuration(Math.round(Number(data.generationDurationMs) / 1000)) : "";
   const formatDurationMs = (value) => Number(value) >= 0 ? formatDuration(Math.round(Number(value) / 1000)) : cn.infoUnavailable;
-  const imageSource = displayImageSource(data.src);
+  const imageSource = displayImageSource(data.src, data.profileId);
   const temporaryUrl = data.sourceImageUrl || (data.src?.startsWith("data:") ? "Base64 \u5185\u5d4c\u6570\u636e（\u65e0\u4e34\u65f6 URL）" : (data.src || cn.infoUnavailable));
   const sourceImageUrl = String(data.sourceImageUrl || "");
   const canOpenSourceUrl = /^https?:\/\//i.test(sourceImageUrl);
@@ -530,11 +551,11 @@ function ImageNode({ id, data, selected }) {
   const requestPrompt = String(data.prompt || "").trim() || cn.infoUnavailable;
   const handleImageDoubleClick = (event) => {
     event.stopPropagation();
-    if (data.src) data.onPreview?.(data.src, data.title, data.comparisonSource);
+    if (data.src) data.onPreview?.(data.src, data.title, data.comparisonSource, data.profileId);
   };
 
   return (
-    <div className={`canvas-node image-node ${selected ? "is-selected" : ""}`} onClick={(event) => { if (!event.target.closest("button")) data.onShowPrompt?.(id); }} onDoubleClick={(event) => { if (data.src && !event.target.closest("button")) data.onPreview?.(data.src, data.title, data.comparisonSource); }}>
+    <div className={`canvas-node image-node ${selected ? "is-selected" : ""}`} onClick={(event) => { if (!event.target.closest("button")) data.onShowPrompt?.(id); }} onDoubleClick={(event) => { if (data.src && !event.target.closest("button")) data.onPreview?.(data.src, data.title, data.comparisonSource, data.profileId); }}>
       <NodeResizer isVisible={selected} minWidth={260} minHeight={290} lineClassName="resizer-line" handleClassName="resizer-handle" />
       <Handle type="target" position={Position.Left} className="node-handle" />
       <div className="node-header">
@@ -543,15 +564,15 @@ function ImageNode({ id, data, selected }) {
           <span>{cn.generatedImage}</span>
         </div>
         <div className="node-actions">
-          {data.src && <button type="button" className="icon-button subtle nodrag" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); data.onOpen?.(data.src); }} aria-label={cn.openImage} title={cn.openImage}><ExternalLink size={15} /></button>}
-          {data.src && <button type="button" className="icon-button subtle nodrag" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); data.onDownload?.(data.src, data.model); }} aria-label={cn.downloadImage} title={cn.downloadImage}><Download size={15} /></button>}
+          {data.src && <button type="button" className="icon-button subtle nodrag" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); data.onOpen?.(data.src, data.profileId); }} aria-label={cn.openImage} title={cn.openImage}><ExternalLink size={15} /></button>}
+          {data.src && <button type="button" className="icon-button subtle nodrag" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); data.onDownload?.(data.src, data.model, data.profileId); }} aria-label={cn.downloadImage} title={cn.downloadImage}><Download size={15} /></button>}
           <button className="icon-button subtle nodrag" onClick={() => data.onDelete?.(id)} aria-label={cn.deleteImageNode} title={cn.deleteImageNode}>
             <Trash2 size={15} />
           </button>
         </div>
       </div>
       <div className="image-frame nodrag" onDoubleClick={handleImageDoubleClick}>
-        {data.src ? <img src={imageSource} alt={data.title || cn.generatedImage} draggable="false" onDoubleClick={handleImageDoubleClick} onLoad={(event) => { const image = event.currentTarget; setActualSize({ width: image.naturalWidth, height: image.naturalHeight }); data.onImageLoad?.(id, image.naturalWidth, image.naturalHeight); }} /> : <div className={`image-placeholder ${data.status === "error" || data.saveStatus === "error" ? "is-error" : ""}`}><Loader2 size={25} className={data.status === "generating" || ["pending", "server-saving", "browser-saving"].includes(data.saveStatus) ? "spin" : ""} /><span>{data.status === "error" ? (data.error || cn.generationFailed) : data.status === "generating" ? cn.generating : data.saveStatus === "error" ? (data.saveError || cn.imageSaveFailed) : ["pending", "server-saving", "browser-saving"].includes(data.saveStatus) ? cn.imageSaving : cn.imagePlaceholder}</span>{data.status === "error" && data.sourcePromptId && <button type="button" className="small-button regenerate-button nodrag" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); data.onRegenerate?.(data.sourcePromptId); }}><RefreshCw size={14} /><span>{cn.regenerate}</span></button>}{data.saveStatus === "error" && data.saveJobId && data.sourceImageUrl && <button type="button" className="small-button retry-download-button nodrag" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); data.onRetryDownload?.(id); }}><Download size={14} /><span>{cn.retryDownload}</span></button>}</div>}
+        {data.src ? <img src={imageSource} alt={data.title || cn.generatedImage} draggable="false" onDoubleClick={handleImageDoubleClick} onLoad={(event) => { const image = event.currentTarget; setActualSize({ width: image.naturalWidth, height: image.naturalHeight }); data.onImageLoad?.(id, image.naturalWidth, image.naturalHeight); }} /> : <div className={`image-placeholder ${data.status === "error" || data.saveStatus === "error" ? "is-error" : ""}`}><Loader2 size={25} className={data.status === "generating" || ["pending", "server-saving", "browser-saving"].includes(data.saveStatus) ? "spin" : ""} /><span>{data.status === "error" ? (data.error || cn.generationFailed) : data.status === "generating" ? cn.generating : data.saveStatus === "error" ? (data.saveError || cn.imageSaveFailed) : ["pending", "server-saving", "browser-saving"].includes(data.saveStatus) ? cn.imageSaving : cn.imagePlaceholder}</span>{data.status === "error" && data.sourcePromptId && <button type="button" className="small-button regenerate-button nodrag" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); data.onRegenerate?.(data.comparisonNodeId || data.sourcePromptId, data.comparisonTaskIndex, id); }}><RefreshCw size={14} /><span>{cn.regenerate}</span></button>}{data.saveStatus === "error" && data.saveJobId && data.sourceImageUrl && <button type="button" className="small-button retry-download-button nodrag" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); data.onRetryDownload?.(id); }}><Download size={14} /><span>{cn.retryDownload}</span></button>}</div>}
         {data.status === "generating" && <span className="image-wait-time"><Clock3 size={11} /> {cn.waiting} {formatDuration(waitSeconds)}</span>}
         {data.status === "success" && generationDuration && <span className="image-wait-time"><Clock3 size={11} /> 耗时 {generationDuration}</span>}
         <div className="image-overlay"><span>{data.model || "gpt-image-2"}</span><span>{displayedImageSize}</span></div>
@@ -568,6 +589,7 @@ function ImageNode({ id, data, selected }) {
             <div><span>{cn.requestProfile}</span><strong>{requestProfile}</strong></div>
             <div><span>{cn.requestReferenceCount}</span><strong>{referenceImageCount ? `${referenceImageCount}` : cn.noReferenceImage}</strong></div>
             <div><span>{cn.requestResponseFormat}</span><strong>{data.responseFormat || cn.infoUnavailable}</strong></div>
+            {data.requestText && <div className="image-info-response"><span>实际请求</span><pre className="image-response-json">{data.requestText}</pre></div>}
           </div>
         </div>
         <div className="image-response-info nodrag" onClick={(event) => event.stopPropagation()}>
@@ -748,7 +770,7 @@ function Sidebar({ activePanel, setActivePanel, collapsed, setCollapsed, canvase
         </button>
         {!collapsed && <div className="canvas-list">{canvases.map((canvas) => <div key={canvas.id} className={`canvas-list-item ${canvas.id === activeCanvasId ? "is-active" : ""}`}><button className="canvas-select-button" onClick={() => onSelectCanvas(canvas.id)} title={canvas.name}><Layers3 size={14} /><span>{canvas.name}</span></button><button className="canvas-rename-button" onClick={(event) => { event.stopPropagation(); onRenameCanvas(canvas.id); }} aria-label={cn.renameCanvas} title={cn.renameCanvas}><Pencil size={13} /></button>{canvases.length > 1 && <button className="canvas-delete-button" onClick={(event) => { event.stopPropagation(); onDeleteCanvas(canvas.id); }} aria-label={cn.deleteCanvas} title={cn.deleteCanvas}><Trash2 size={13} /></button>}</div>)}</div>}
       </div>
-      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.0.43</span></div>}
+      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.6</span></div>}
     </aside>
   );
 }
@@ -914,10 +936,6 @@ function SettingsView({ config, apiKeyDraft, setApiKeyDraft, onChange, onSizeCha
           <div className="field-with-icon"><Server size={16} /><input id="endpoint" value={config.endpoint} onChange={(event) => onChange("endpoint", event.target.value)} placeholder="https://provider.example/v1" /></div>
           <p className="field-note">{cn.appendEndpoint} <code>/images/generations</code>.</p>
 
-          <label className="field-label" htmlFor="image-download-proxy-enabled">{cn.imageDownloadProxyEnabled}</label>
-          <select id="image-download-proxy-enabled" value={config.imageDownloadProxyEnabled ? "on" : "off"} onChange={(event) => onChange("imageDownloadProxyEnabled", event.target.value === "on")}><option value="off">关</option><option value="on">开</option></select>
-          {config.imageDownloadProxyEnabled && <><label className="field-label" htmlFor="image-download-proxy">{cn.imageDownloadProxyPort}</label><div className="field-with-icon"><Server size={16} /><input id="image-download-proxy" value={config.imageDownloadProxy || ""} onChange={(event) => onChange("imageDownloadProxy", event.target.value)} placeholder="7890" autoComplete="off" /></div><p className="field-note">{cn.imageDownloadProxyHint}</p></>}
-
           <label className="field-label" htmlFor="api-key">{cn.apiKey}</label>
           <div className="field-with-icon api-key-field"><KeyRound size={16} /><input id="api-key" type={showApiKey ? "text" : "password"} value={apiKeyDraft} onChange={(event) => setApiKeyDraft(event.target.value)} placeholder={config.hasApiKey ? "****************" : "sk-..."} autoComplete="off" /><button type="button" className="icon-button field-toggle" onClick={toggleApiKeyVisibility} aria-label={showApiKey ? "隐藏 API Key" : "显示 API Key"} title={showApiKey ? "隐藏 API Key" : "显示 API Key"}>{showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}</button></div>
           <p className="field-note">{cn.keyNote}</p>
@@ -928,9 +946,6 @@ function SettingsView({ config, apiKeyDraft, setApiKeyDraft, onChange, onSizeCha
           </div>
           <label className="field-label" htmlFor="quality">{cn.quality}</label>
           <select id="quality" value={config.quality} onChange={(event) => onChange("quality", event.target.value)}><option value="high">{cn.high}</option><option value="medium">{cn.medium}</option><option value="low">{cn.low}</option><option value="auto">{cn.auto}</option></select>
-          <label className="field-label" htmlFor="response-format">{cn.responseFormat}</label>
-          <select id="response-format" value={config.responseFormat || "url"} onChange={(event) => onChange("responseFormat", event.target.value)}><option value="url">{cn.responseFormatUrl}</option><option value="b64_json">{cn.responseFormatBase64}</option></select>
-
           <label className="field-label" htmlFor="output-dir">{cn.outputDir}</label>
           <input id="output-dir" value={config.outputDir || ""} onChange={(event) => onChange("outputDir", event.target.value)} placeholder="output" />
           <p className="field-note">{cn.autoSaveHint}</p>
@@ -947,6 +962,17 @@ function SettingsView({ config, apiKeyDraft, setApiKeyDraft, onChange, onSizeCha
           <div className="aside-heading"><span className="aside-icon"><FileDown size={16} /></span><div><strong>{cn.configFiles}</strong><span>{cn.moveWorkspace}</span></div></div>
           <div className="config-actions"><button className="toolbar-button" onClick={onExport}><Download size={16} /><span>{cn.exportJson}</span></button><button className="toolbar-button" onClick={() => importRef.current?.click()}><Upload size={16} /><span>{cn.importJson}</span></button><button className="toolbar-button danger" onClick={onClearCache}><Trash2 size={16} /><span>{cn.clearCache}</span></button><input ref={importRef} type="file" accept="application/json,.json" onChange={onImport} hidden /></div>
           <p className="field-note">{cn.exportWarning}</p>
+          <div className="settings-aside-divider" />
+          <div className="aside-heading"><span className="aside-icon advanced-settings-icon"><Settings2 size={16} /></span><div><strong>{cn.advancedSettings}</strong><span>{cn.advancedSettingsIntro}</span></div></div>
+          <div className="advanced-settings-fields">
+            <label className="field-label" htmlFor="image-download-proxy-enabled">{cn.imageDownloadProxyEnabled}</label>
+            <select id="image-download-proxy-enabled" value={config.imageDownloadProxyEnabled ? "on" : "off"} onChange={(event) => onChange("imageDownloadProxyEnabled", event.target.value === "on")}><option value="off">关</option><option value="on">开</option></select>
+            {config.imageDownloadProxyEnabled && <><label className="field-label" htmlFor="image-download-proxy">{cn.imageDownloadProxyPort}</label><div className="field-with-icon"><Server size={16} /><input id="image-download-proxy" value={config.imageDownloadProxy || ""} onChange={(event) => onChange("imageDownloadProxy", event.target.value)} placeholder="7890" autoComplete="off" /></div><p className="field-note">{cn.imageDownloadProxyHint}</p></>}
+            <label className="field-label" htmlFor="response-format">{cn.responseFormat}</label>
+            <select id="response-format" value={config.responseFormat || "url"} onChange={(event) => onChange("responseFormat", event.target.value)}><option value="url">{cn.responseFormatUrl}</option><option value="b64_json">{cn.responseFormatBase64}</option></select>
+            <label className="field-label" htmlFor="reference-image-mode">{cn.referenceImageMode}</label>
+            <select id="reference-image-mode" value={config.referenceImageMode || "file"} onChange={(event) => onChange("referenceImageMode", event.target.value)}><option value="file">{cn.referenceImageModeFile}</option><option value="url">{cn.referenceImageModeUrl}</option></select>
+          </div>
         </aside>
       </div>
         </div>
@@ -977,6 +1003,7 @@ function HistoryInfoButtons({ item }) {
         <div><span>{cn.requestProfile}</span><strong>{requestProfile}</strong></div>
         <div><span>{cn.requestReferenceCount}</span><strong>{referenceImageCount ? `${referenceImageCount}` : cn.noReferenceImage}</strong></div>
         <div><span>{cn.requestResponseFormat}</span><strong>{item.responseFormat || cn.infoUnavailable}</strong></div>
+        {item.requestText && <div className="image-info-response"><span>实际请求</span><pre className="image-response-json">{item.requestText}</pre></div>}
       </div>
     </div>
     <div className="image-response-info" onClick={(event) => event.stopPropagation()}>
@@ -1010,8 +1037,8 @@ function HistoryView({ history, onAddHistoryImage, onClearHistory, onDeleteHisto
 function ImagePreviewDialog({ preview, onClose }) {
   const [splitPosition, setSplitPosition] = useState(50);
   const [zoom, setZoom] = useState(1);
-  const generatedSource = displayImageSource(preview.src);
-  const originalSource = displayImageSource(preview.originalSrc);
+  const generatedSource = displayImageSource(preview.src, preview.profileId);
+  const originalSource = displayImageSource(preview.originalSrc, preview.profileId);
   const hasComparison = Boolean(preview.originalSrc && preview.originalSrc !== preview.src);
   const handleWheel = useCallback((event) => {
     event.preventDefault();
@@ -1132,7 +1159,7 @@ function ComparisonDialog({ config, getProfileModelOptions, initialPrompt, initi
           {!prompt.trim() && <p className="comparison-form-error">{cn.comparisonNoPrompt}</p>}
           {!rows.length && <p className="comparison-form-error">{cn.comparisonNoSelection}</p>}
         </div>
-        <div className="comparison-results">{results.length ? results.map((result) => <article className={`comparison-result ${result.error ? "is-error" : ""}`} key={result.rowId}><div className="comparison-result-heading"><strong>{result.profileName || result.profileId}</strong><span>{result.model || cn.infoUnavailable}</span></div>{result.imageUrl ? <img src={displayImageSource(result.imageUrl)} alt={`${result.profileName || result.profileId} ${cn.generatedImage}`} /> : <div className="comparison-result-placeholder">{result.error || cn.comparisonFailed}</div>}</article>) : <div className="comparison-results-empty"><Images size={28} /><span>{cn.comparisonEmpty}</span></div>}</div>
+        <div className="comparison-results">{results.length ? results.map((result) => <article className={`comparison-result ${result.error ? "is-error" : ""}`} key={result.rowId}><div className="comparison-result-heading"><strong>{result.profileName || result.profileId}</strong><span>{result.model || cn.infoUnavailable}</span></div>{result.imageUrl ? <img src={displayImageSource(result.imageUrl, result.profileId)} alt={`${result.profileName || result.profileId} ${cn.generatedImage}`} /> : <div className="comparison-result-placeholder">{result.error || cn.comparisonFailed}</div>}</article>) : <div className="comparison-results-empty"><Images size={28} /><span>{cn.comparisonEmpty}</span></div>}</div>
       </div>
     </section>
   </div>;
@@ -1147,13 +1174,13 @@ function AppShell() {
   const stableReferenceFiles = useCallback((id, files) => handlersRef.current.referenceFiles?.(id, files), []);
   const stableGroupImagesChange = useCallback((id, images) => handlersRef.current.updateGroupImages?.(id, images), []);
   const stableGroupFiles = useCallback((id, files) => handlersRef.current.groupFiles?.(id, files), []);
-  const stableGenerate = useCallback((id) => handlersRef.current.generateImage?.(id), []);
+  const stableGenerate = useCallback((id, comparisonTaskIndex, comparisonImageId) => handlersRef.current.generateImage?.(id, comparisonTaskIndex, comparisonImageId), []);
   const stableDelete = useCallback((id) => handlersRef.current.deleteNode?.(id), []);
-  const stableDownload = useCallback((src, title) => handlersRef.current.downloadImage?.(src, title), []);
-  const stableOpen = useCallback((src) => handlersRef.current.openImage?.(src), []);
+  const stableDownload = useCallback((src, title, profileId) => handlersRef.current.downloadImage?.(src, title, profileId), []);
+  const stableOpen = useCallback((src, profileId) => handlersRef.current.openImage?.(src, profileId), []);
   const stableOpenUrl = useCallback((src) => handlersRef.current.openUrl?.(src), []);
   const stableRetryDownload = useCallback((id) => handlersRef.current.retryDownload?.(id), []);
-  const stablePreview = useCallback((src, title, originalSrc) => handlersRef.current.previewImage?.(src, title, originalSrc), []);
+  const stablePreview = useCallback((src, title, originalSrc, profileId) => handlersRef.current.previewImage?.(src, title, originalSrc, profileId), []);
   const stableShowPrompt = useCallback((id) => handlersRef.current.showPromptForImage?.(id), []);
   const stableParamChange = useCallback((id, key, value) => handlersRef.current.updateNodeParam?.(id, key, value), []);
   const stableSizeChange = useCallback((id, selection) => handlersRef.current.updateNodeSize?.(id, selection), []);
@@ -1162,7 +1189,7 @@ function AppShell() {
   const stableFileSize = useCallback((id, fileSize) => handlersRef.current.updateFileSize?.(id, fileSize), []);
   const stableImageLoad = useCallback((id, width, height) => handlersRef.current.imageLoad?.(id, width, height), []);
   const stableResetGeneration = useCallback((id) => handlersRef.current.resetGeneration?.(id), []);
-  const [config, setConfig] = useState({ activeProfileId: "default", profiles: [{ id: "default", name: "默认配置", endpoint: "https://api.openai.com/v1", model: DEFAULT_IMAGE_MODEL, ...DEFAULT_SIZE_SELECTION, quality: "high", responseFormat: "url", outputDir: "output", hasApiKey: false }], id: "default", name: "默认配置", endpoint: "https://api.openai.com/v1", model: DEFAULT_IMAGE_MODEL, ...DEFAULT_SIZE_SELECTION, quality: "high", responseFormat: "url", outputDir: "output", imageDownloadProxyEnabled: false, imageDownloadProxy: "", hasApiKey: false });
+  const [config, setConfig] = useState({ activeProfileId: "default", profiles: [{ id: "default", name: "默认配置", endpoint: "https://api.openai.com/v1", model: DEFAULT_IMAGE_MODEL, ...DEFAULT_SIZE_SELECTION, quality: "high", responseFormat: "url", referenceImageMode: "file", outputDir: "output", hasApiKey: false }], id: "default", name: "默认配置", endpoint: "https://api.openai.com/v1", model: DEFAULT_IMAGE_MODEL, ...DEFAULT_SIZE_SELECTION, quality: "high", responseFormat: "url", referenceImageMode: "file", outputDir: "output", imageDownloadProxyEnabled: false, imageDownloadProxy: "", hasApiKey: false });
   const [modelFetchState, setModelFetchState] = useState("idle");
   const [modelFetchError, setModelFetchError] = useState("");
   const [fetchedModelsByProfile, setFetchedModelsByProfile] = useState(loadFetchedModelsByProfile);
@@ -1236,7 +1263,9 @@ function AppShell() {
     }));
   }, [activeCanvasId, edges, nodes]);
   useEffect(() => {
-    try { localStorage.setItem(CANVASES_KEY, JSON.stringify(canvasState)); } catch { /* Keep the current session usable if storage is full. */ }
+    try {
+      localStorage.setItem(CANVASES_KEY, JSON.stringify(canvasState, (key, value) => key === "responseText" || key === "rawResponseText" ? compactResponseTextForStorage(value) : value));
+    } catch { /* Keep the current session usable if storage is full. */ }
   }, [canvasState]);
 
   const updateNodeData = useCallback((id, patch) => setNodes((current) => current.map((node) => node.id === id ? { ...node, data: { ...node.data, ...patch } } : node)), [setNodes]);
@@ -1282,9 +1311,9 @@ function AppShell() {
   const resetGeneration = useCallback((id) => updateNodeData(id, { status: "idle", error: "", generationStartedAt: "" }), [updateNodeData]);
   const deleteNode = useCallback((id) => { setNodes((current) => current.filter((node) => node.id !== id)); setEdges((current) => current.filter((edge) => edge.source !== id && edge.target !== id)); }, [setEdges, setNodes]);
 
-  const downloadImage = useCallback(async (src, model = "ai-image") => {
+  const downloadImage = useCallback(async (src, model = "ai-image", profileId = "") => {
     try {
-      const response = await fetch(displayImageSource(src));
+      const response = await fetch(displayImageSource(src, profileId));
       if (!response.ok) throw new Error("download failed");
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -1295,12 +1324,12 @@ function AppShell() {
     } catch { setToast(cn.downloadFailed); }
   }, []);
 
-  const openImage = useCallback((src) => window.open(displayImageSource(src), "_blank", "noopener,noreferrer"), []);
+  const openImage = useCallback((src, profileId = "") => window.open(displayImageSource(src, profileId), "_blank", "noopener,noreferrer"), []);
   const openUrl = useCallback((src) => {
     const url = String(src || "");
     if (/^https?:\/\//i.test(url)) window.open(url, "_blank", "noopener,noreferrer");
   }, []);
-  const openImagePreview = useCallback((src, title, originalSrc = "") => setPreviewImage({ src, title, originalSrc }), []);
+  const openImagePreview = useCallback((src, title, originalSrc = "", profileId = "") => setPreviewImage({ src, title, originalSrc, profileId }), []);
   const addComparisonAt = useCallback((position) => {
     const selectedNode = nodes.find((node) => node.selected);
     const sourceNode = selectedNode?.type === "prompt" || selectedNode?.type === "comparison" ? selectedNode : selectedNode?.data?.sourcePromptId ? nodes.find((node) => node.id === selectedNode.data.sourcePromptId) : nodes.find((node) => node.type === "prompt");
@@ -1455,7 +1484,7 @@ function AppShell() {
             const responseText = result.responseText || "";
             const rawResponseText = result.rawResponseText || "";
             appendGenerationLog({ ok: false, prompt, text: rawResponseText || responseText || result.error || cn.generationFailed });
-            return { error: result.error || cn.generationFailed, responseText, rawResponseText };
+            return { error: result.error || cn.generationFailed, requestText: result.requestText || "", responseText, rawResponseText };
           }
           const responseText = result.responseText || "";
           const rawResponseText = result.rawResponseText || "";
@@ -1472,15 +1501,15 @@ function AppShell() {
       const successful = results.filter((entry) => entry.result);
       results.forEach((entry, index) => {
         if (!entry.result) return;
-        appendHistory({ id: outputNodeIds[index], src: "", sourceImageUrl: entry.result.sourceImageUrl || "", saveJobId: entry.result.saveJobId || "", prompt, model, quality, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: tasks[index]?.length || 0, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, savedPath: "", fileSize: 0, apiRequestDurationMs: entry.result.apiRequestDurationMs, imageDownloadDurationMs: undefined, localWriteDurationMs: undefined, generationDurationMs: entry.generationDurationMs || 0, saveStatus: entry.result.saveStatus || "pending", status: "success", responseText: entry.result.responseText || entry.responseText || "", rawResponseText: entry.result.rawResponseText || entry.rawResponseText || "" });
+        appendHistory({ id: outputNodeIds[index], src: "", sourceImageUrl: entry.result.sourceImageUrl || "", saveJobId: entry.result.saveJobId || "", prompt, model, quality, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: tasks[index]?.length || 0, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, savedPath: "", fileSize: 0, apiRequestDurationMs: entry.result.apiRequestDurationMs, imageDownloadDurationMs: undefined, localWriteDurationMs: undefined, generationDurationMs: entry.generationDurationMs || 0, saveStatus: entry.result.saveStatus || "pending", status: "success", requestText: entry.result.requestText || entry.requestText || "", responseText: entry.result.responseText || entry.responseText || "", rawResponseText: entry.result.rawResponseText || entry.rawResponseText || "" });
         if (entry.result.saveJobId) window.setTimeout(() => pollImageSave(entry.result.saveJobId, entry.result.sourceImageUrl || entry.result.imageUrl, outputNodeIds[index], outputNodeIds[index], Date.now() - (entry.generationDurationMs || 0)), 0);
       });
       setNodes((current) => current.map((node) => {
         const outputIndex = outputNodeIds.indexOf(node.id);
         if (outputIndex < 0) return node;
         const entry = results[outputIndex];
-        if (!entry?.result) return { ...node, data: { ...node.data, status: "error", error: entry?.error || cn.generationFailed, responseText: entry?.responseText || "", rawResponseText: entry?.rawResponseText || "" } };
-        return { ...node, data: { ...node.data, src: "", sourceImageUrl: entry.result.sourceImageUrl || "", saveJobId: entry.result.saveJobId || "", savedPath: "", fileSize: 0, apiRequestDurationMs: entry.result.apiRequestDurationMs, imageDownloadDurationMs: undefined, localWriteDurationMs: undefined, generationDurationMs: entry.generationDurationMs || 0, saveStatus: entry.result.saveStatus || "pending", status: "success", error: "", responseText: entry.result.responseText || entry.responseText || "", rawResponseText: entry.result.rawResponseText || entry.rawResponseText || "" } };
+        if (!entry?.result) return { ...node, data: { ...node.data, status: "error", error: entry?.error || cn.generationFailed, requestText: entry?.requestText || "", responseText: entry?.responseText || "", rawResponseText: entry?.rawResponseText || "" } };
+        return { ...node, data: { ...node.data, src: "", sourceImageUrl: entry.result.sourceImageUrl || "", saveJobId: entry.result.saveJobId || "", savedPath: "", fileSize: 0, apiRequestDurationMs: entry.result.apiRequestDurationMs, imageDownloadDurationMs: undefined, localWriteDurationMs: undefined, generationDurationMs: entry.generationDurationMs || 0, saveStatus: entry.result.saveStatus || "pending", status: "success", error: "", requestText: entry.result.requestText || entry.requestText || "", responseText: entry.result.responseText || entry.responseText || "", rawResponseText: entry.result.rawResponseText || entry.rawResponseText || "" } };
       }));
       if (!successful.length) throw new Error(results.find((entry) => entry.error)?.error || cn.generationFailed);
       const failedCount = results.length - successful.length;
@@ -1492,11 +1521,13 @@ function AppShell() {
     }
   }, [appendGenerationLog, appendHistory, config.activeProfileId, config.model, config.quality, config.size, edges, nodes, pollImageSave, setEdges, setNodes, stableDelete, stableDownload, stableFileSize, stableOpen, stableOpenUrl, stablePreview, stableShowPrompt, updateNodeData]);
 
-  const generateComparison = useCallback(async (id) => {
+  const generateComparison = useCallback(async (id, comparisonTaskIndex = null) => {
     const source = nodes.find((node) => node.id === id && node.type === "comparison");
     const prompt = String(source?.data?.prompt || "").trim();
     const entries = Array.isArray(source?.data?.entries) ? source.data.entries.filter((entry) => entry?.profileId) : [];
     if (!source || !prompt || !entries.length) return;
+    const retryTaskIndex = Number.isInteger(comparisonTaskIndex) ? comparisonTaskIndex : null;
+    if (retryTaskIndex !== null && (retryTaskIndex < 0 || retryTaskIndex >= entries.length)) return;
     let outputNodeIds = [];
     updateNodeData(id, { status: "generating", error: "", generationStartedAt: new Date().toISOString() });
     try {
@@ -1504,26 +1535,48 @@ function AppShell() {
       const createdAt = new Date().toISOString();
       const generationBatchId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const sourceWidth = Number(source.width || source.measured?.width || source.style?.width || 760);
-      const existingOutputBottom = nodes.filter((node) => node.type === "image" && node.data?.sourcePromptId === id).reduce((bottom, node) => {
-        const top = Number(node.position?.y) || source.position.y;
-        const height = Number(node.height || node.measured?.height || node.style?.height || 430);
-        return Math.max(bottom, top + height);
-      }, source.position.y);
-      const outputStartY = existingOutputBottom > source.position.y ? existingOutputBottom + 32 : source.position.y;
+      const existingOutputRight = nodes.filter((node) => node.type === "image" && node.data?.sourcePromptId === id).reduce((right, node) => {
+        const left = Number(node.position?.x) || source.position.x + sourceWidth + 80;
+        const width = Number(node.width || node.measured?.width || node.style?.width || 360);
+        return Math.max(right, left + width);
+      }, source.position.x + sourceWidth + 80);
+      const outputStartX = existingOutputRight > source.position.x + sourceWidth + 80 ? existingOutputRight + 32 : source.position.x + sourceWidth + 80;
       const tasks = entries.map((entry) => {
         const model = String(entry.model || DEFAULT_IMAGE_MODEL).trim();
         const sizeSelection = normalizeImageSizeSelection({ ...entry, model });
         const profile = (config.profiles || []).find((item) => item.id === entry.profileId);
         return { entry, model, sizeSelection, profile };
       });
-      const outputNodes = tasks.map((task, index) => {
+      const comparisonOutputNodes = nodes.filter((node) => node.type === "image" && node.data?.sourcePromptId === id).sort((left, right) => (Number(left.position?.x) || 0) - (Number(right.position?.x) || 0));
+      const existingRetryNode = retryTaskIndex === null ? null : nodes.find((node) => node.type === "image" && node.data?.comparisonNodeId === id && node.data?.comparisonTaskIndex === retryTaskIndex) || comparisonOutputNodes[retryTaskIndex];
+      if (retryTaskIndex !== null && !existingRetryNode) return;
+      const runTaskIndexes = retryTaskIndex === null ? tasks.map((_task, index) => index) : [retryTaskIndex];
+      const runTasks = runTaskIndexes.map((taskIndex) => tasks[taskIndex]);
+      const outputNodes = retryTaskIndex === null ? tasks.map((task, index) => {
         const imageId = `image-${generationBatchId}-${index}`;
-        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80, y: outputStartY + index * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", comparisonSource: referenceImages[0] || "", prompt, title: `${task.profile?.name || task.entry.profileId} - ${task.model}`, model: task.model, quality: task.entry.quality || task.profile?.quality || "high", requestCount: 1, ...task.sizeSelection, profileId: task.entry.profileId, profileName: task.profile?.name || task.entry.profileId, referenceImageCount: referenceImages.length, responseFormat: task.profile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
-      });
-      outputNodeIds = outputNodes.map((node) => node.id);
-      setNodes((current) => [...current, ...outputNodes]);
-      setEdges((current) => [...current, ...outputNodes.map((node) => ({ id: `edge-${id}-${node.id}`, source: id, target: node.id, animated: true, style: { stroke: "#f4b866", strokeWidth: 1.5 } }))]);
-      const results = await Promise.all(tasks.map(async (task, taskIndex) => {
+        return { id: imageId, type: "image", position: { x: outputStartX + index * 392, y: source.position.y }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, comparisonNodeId: id, comparisonTaskIndex: index, src: "", comparisonSource: referenceImages[0] || "", prompt, title: `${task.profile?.name || task.entry.profileId} - ${task.model}`, model: task.model, quality: task.entry.quality || task.profile?.quality || "high", requestCount: 1, ...task.sizeSelection, profileId: task.entry.profileId, profileName: task.profile?.name || task.entry.profileId, referenceImageCount: referenceImages.length, responseFormat: task.profile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
+      }) : [];
+      outputNodeIds = retryTaskIndex === null ? outputNodes.map((node) => node.id) : [existingRetryNode.id];
+      if (retryTaskIndex === null) {
+        setNodes((current) => [...current, ...outputNodes]);
+        setEdges((current) => [...current, ...outputNodes.map((node) => ({ id: `edge-${id}-${node.id}`, source: id, target: node.id, animated: true, style: { stroke: "#f4b866", strokeWidth: 1.5 } }))]);
+      } else {
+        setNodes((current) => current.map((node) => node.id === existingRetryNode.id ? { ...node, data: { ...node.data, status: "generating", error: "", saveError: "" } } : node));
+      }
+      const applyComparisonResult = (entry, taskIndex) => {
+        const task = tasks[taskIndex];
+        const outputIndex = runTaskIndexes.indexOf(taskIndex);
+        const outputNodeId = outputNodeIds[outputIndex];
+        if (entry.result) {
+          appendHistory({ id: outputNodeId, src: "", sourceImageUrl: entry.result.sourceImageUrl || "", saveJobId: entry.result.saveJobId || "", prompt, model: task.model, quality: task.entry.quality || task.profile?.quality || "high", requestCount: 1, ...task.sizeSelection, profileId: task.entry.profileId, profileName: task.profile?.name || task.entry.profileId, referenceImageCount: referenceImages.length, responseFormat: task.profile?.responseFormat || config.responseFormat || "url", createdAt, savedPath: "", fileSize: 0, apiRequestDurationMs: entry.result.apiRequestDurationMs, imageDownloadDurationMs: undefined, localWriteDurationMs: undefined, generationDurationMs: entry.generationDurationMs || 0, saveStatus: entry.result.saveStatus || "pending", status: "success", requestText: entry.result.requestText || entry.requestText || "", responseText: entry.result.responseText || entry.responseText || "", rawResponseText: entry.result.rawResponseText || entry.rawResponseText || "" });
+          setNodes((current) => current.map((node) => node.id !== outputNodeId ? node : { ...node, data: { ...node.data, sourceImageUrl: entry.result.sourceImageUrl || "", saveJobId: entry.result.saveJobId || "", apiRequestDurationMs: entry.result.apiRequestDurationMs, generationDurationMs: entry.generationDurationMs || 0, saveStatus: entry.result.saveStatus || "pending", status: "success", error: "", requestText: entry.result.requestText || entry.requestText || "", responseText: entry.result.responseText || entry.responseText || "", rawResponseText: entry.result.rawResponseText || entry.rawResponseText || "", model: task.model, ...task.sizeSelection } }));
+          if (entry.result.saveJobId) window.setTimeout(() => pollImageSave(entry.result.saveJobId, entry.result.sourceImageUrl || entry.result.imageUrl, outputNodeId, outputNodeId, Date.now() - (entry.generationDurationMs || 0)), 0);
+        } else {
+          setNodes((current) => current.map((node) => node.id !== outputNodeId ? node : { ...node, data: { ...node.data, status: "error", error: entry.error || cn.generationFailed, requestText: entry.requestText || "", responseText: entry.responseText || "", rawResponseText: entry.rawResponseText || "" } }));
+        }
+      };
+      const results = await Promise.all(runTasks.map(async (task, resultIndex) => {
+        const taskIndex = runTaskIndexes[resultIndex];
         const generationStartedAt = Date.now();
         const controller = new AbortController();
         const timeout = window.setTimeout(() => controller.abort(), IMAGE_GENERATION_TIMEOUT_MS);
@@ -1536,39 +1589,39 @@ function AppShell() {
             const responseText = result.responseText || "";
             const rawResponseText = result.rawResponseText || "";
             appendGenerationLog({ ok: false, prompt, text: rawResponseText || responseText || result.error || cn.generationFailed });
-            return { error: result.error || cn.generationFailed, responseText, rawResponseText };
+            const entry = { error: result.error || cn.generationFailed, requestText: result.requestText || "", responseText, rawResponseText };
+            applyComparisonResult(entry, taskIndex);
+            return entry;
           }
           const responseText = result.responseText || "";
           const rawResponseText = result.rawResponseText || "";
           appendGenerationLog({ ok: true, prompt, text: rawResponseText || responseText || JSON.stringify({ ok: true, model: task.model }, null, 2) });
-          return { result, responseText, rawResponseText, generationDurationMs: Date.now() - generationStartedAt };
+          const entry = { result, responseText, rawResponseText, generationDurationMs: Date.now() - generationStartedAt };
+          applyComparisonResult(entry, taskIndex);
+          return entry;
         } catch (error) {
           const message = controller.signal.aborted ? cn.generationTimeout : (error.message || cn.generationFailed);
           appendGenerationLog({ ok: false, prompt, text: message });
-          return { error: message, responseText: message, rawResponseText: "", generationDurationMs: Date.now() - generationStartedAt };
+          const entry = { error: message, responseText: message, rawResponseText: "", generationDurationMs: Date.now() - generationStartedAt };
+          applyComparisonResult(entry, taskIndex);
+          return entry;
         } finally {
           window.clearTimeout(timeout);
         }
       }));
       const successful = results.filter((entry) => entry.result);
-      results.forEach((entry, index) => {
-        const task = tasks[index];
-        if (!entry.result) return;
-        appendHistory({ id: outputNodeIds[index], src: "", sourceImageUrl: entry.result.sourceImageUrl || "", saveJobId: entry.result.saveJobId || "", prompt, model: task.model, quality: task.entry.quality || task.profile?.quality || "high", requestCount: 1, ...task.sizeSelection, profileId: task.entry.profileId, profileName: task.profile?.name || task.entry.profileId, referenceImageCount: referenceImages.length, responseFormat: task.profile?.responseFormat || config.responseFormat || "url", createdAt, savedPath: "", fileSize: 0, apiRequestDurationMs: entry.result.apiRequestDurationMs, generationDurationMs: entry.generationDurationMs || 0, saveStatus: entry.result.saveStatus || "pending", status: "success", responseText: entry.result.responseText || entry.responseText || "", rawResponseText: entry.result.rawResponseText || entry.rawResponseText || "" });
-        if (entry.result.saveJobId) window.setTimeout(() => pollImageSave(entry.result.saveJobId, entry.result.sourceImageUrl || entry.result.imageUrl, outputNodeIds[index], outputNodeIds[index], Date.now() - (entry.generationDurationMs || 0)), 0);
-      });
-      setNodes((current) => current.map((node) => {
-        const outputIndex = outputNodeIds.indexOf(node.id);
-        if (outputIndex < 0) return node;
-        const task = tasks[outputIndex];
-        const entry = results[outputIndex];
-        if (!entry?.result) return { ...node, data: { ...node.data, status: "error", error: entry?.error || cn.generationFailed, responseText: entry?.responseText || "", rawResponseText: entry?.rawResponseText || "" } };
-        return { ...node, data: { ...node.data, sourceImageUrl: entry.result.sourceImageUrl || "", saveJobId: entry.result.saveJobId || "", apiRequestDurationMs: entry.result.apiRequestDurationMs, generationDurationMs: entry.generationDurationMs || 0, saveStatus: entry.result.saveStatus || "pending", status: "success", error: "", responseText: entry.result.responseText || entry.responseText || "", rawResponseText: entry.result.rawResponseText || entry.rawResponseText || "", model: task.model, ...task.sizeSelection } };
-      }));
       if (!successful.length) throw new Error(results.find((entry) => entry.error)?.error || cn.generationFailed);
       const failedCount = results.length - successful.length;
-      updateNodeData(id, { status: failedCount ? "error" : "success", error: failedCount ? `${failedCount} 个生成任务失败。` : "", generationStartedAt: "" });
-      setToast(successful.length > 1 ? `已添加 ${successful.length} 张对比图片。` : cn.imageAddedToast);
+      if (retryTaskIndex === null) {
+        updateNodeData(id, { status: failedCount ? "error" : "success", error: failedCount ? `${failedCount} 个生成任务失败。` : "", generationStartedAt: "" });
+        setToast(successful.length > 1 ? `已添加 ${successful.length} 张对比图片。` : cn.imageAddedToast);
+      } else {
+        const otherOutputs = nodes.filter((node) => node.type === "image" && (node.data?.comparisonNodeId === id || node.data?.sourcePromptId === id) && node.id !== outputNodeIds[0]);
+        const remainingFailures = otherOutputs.filter((node) => node.data?.status === "error").length;
+        const remainingGenerating = otherOutputs.some((node) => node.data?.status === "generating");
+        updateNodeData(id, { status: remainingFailures ? "error" : remainingGenerating ? "generating" : "success", error: remainingFailures ? `${remainingFailures} 个生成任务失败。` : "", generationStartedAt: "" });
+        setToast(cn.imageAddedToast);
+      }
     } catch (error) {
       if (outputNodeIds.length) setNodes((current) => current.map((node) => outputNodeIds.includes(node.id) && !node.data?.src ? { ...node, data: { ...node.data, status: "error", error: error.message || cn.generationFailed } } : node));
       updateNodeData(id, { status: "error", error: error.message || cn.generationFailed, generationStartedAt: "" });
@@ -1606,14 +1659,25 @@ function AppShell() {
     const model = modelOptions.includes(sourceModel) ? sourceModel : (modelOptions[0] || "");
     const sizeSelection = normalizeImageSizeSelection({ model, resolution: sourceNode.data.resolution || config.resolution, ratio: sourceNode.data.ratio || config.ratio, size: sourceNode.data.size || config.size, width: sourceNode.data.width || config.width, height: sourceNode.data.height || config.height });
     const sourceHeight = Number(sourceNode.height || sourceNode.measured?.height || sourceNode.style?.height || (isImage ? 390 : 460));
-    const promptNode = { id, type: "prompt", position: { x: sourceNode.position.x, y: sourceNode.position.y + sourceHeight + 60 }, style: { width: 580, height: 580 }, data: { sourceNodeId: sourceId, sourceImageId: isImage ? sourceId : "", prompt: "", referenceImages: isImage && sourceNode.data.src ? [sourceNode.data.src] : [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, requestCount: 1, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } };
+    const promptReferenceImage = isImage ? (sourceNode.data.sourceImageUrl || sourceNode.data.src || "") : "";
+    const promptNode = { id, type: "prompt", position: { x: sourceNode.position.x, y: sourceNode.position.y + sourceHeight + 60 }, style: { width: 580, height: 580 }, data: { sourceNodeId: sourceId, sourceImageId: isImage ? sourceId : "", prompt: "", referenceImages: promptReferenceImage ? [promptReferenceImage] : [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, requestCount: 1, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } };
     setNodes((current) => [...current, promptNode]);
     setEdges((current) => current.some((edge) => edge.source === sourceId && edge.target === id) ? current : [...current, { id: `edge-${sourceId}-${id}`, source: sourceId, target: id, animated: true, style: { stroke: isImage ? "#7dc7b9" : "#86a9e9", strokeWidth: 1.5 } }]);
   }, [config, getProfileModelOptions, nodes, setEdges, setNodes, stableDelete, stableGenerate, stableParamChange, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableSizeChange]);
 
-  const generateByNode = useCallback((id) => {
+  const generateByNode = useCallback((id, comparisonTaskIndex, comparisonImageId) => {
     const node = nodes.find((item) => item.id === id);
-    return node?.type === "comparison" ? generateComparison(id) : generateImage(id);
+    if (node?.type !== "comparison") return generateImage(id);
+    let taskIndex = comparisonTaskIndex;
+    if (!Number.isInteger(taskIndex) && comparisonImageId) {
+      const comparisonImage = nodes.find((item) => item.id === comparisonImageId && item.type === "image");
+      taskIndex = comparisonImage?.data?.comparisonTaskIndex;
+      if (!Number.isInteger(taskIndex)) {
+        const comparisonImages = nodes.filter((item) => item.type === "image" && item.data?.sourcePromptId === id).sort((left, right) => (Number(left.position?.x) || 0) - (Number(right.position?.x) || 0));
+        taskIndex = comparisonImages.findIndex((item) => item.id === comparisonImageId);
+      }
+    }
+    return Number.isInteger(taskIndex) && taskIndex >= 0 ? generateComparison(id, taskIndex) : generateComparison(id);
   }, [generateComparison, generateImage, nodes]);
   handlersRef.current = { updatePrompt, updateReference, referenceFiles, updateGroupImages, groupFiles, updateNodeParam, updateNodeSize, updateComparison, updateFileSize, imageLoad: updateImageLoad, resetGeneration, generateImage: generateByNode, generateComparison, deleteNode, downloadImage, openImage, openUrl, retryDownload: retryImageDownload, previewImage: openImagePreview, showPromptForImage };
 
@@ -1661,7 +1725,7 @@ function AppShell() {
   const saveSettings = useCallback(async () => {
     setSaveState("saving");
     try {
-      const response = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profileId: config.activeProfileId, name: config.name, endpoint: config.endpoint, model: config.model, resolution: config.resolution, ratio: config.ratio, width: config.width, height: config.height, size: config.size, quality: config.quality, responseFormat: config.responseFormat || "url", outputDir: config.outputDir, imageDownloadProxyEnabled: Boolean(config.imageDownloadProxyEnabled), imageDownloadProxy: config.imageDownloadProxy || "", apiKey: apiKeyDraft.trim() || undefined }) });
+      const response = await fetch("/api/config", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profileId: config.activeProfileId, name: config.name, endpoint: config.endpoint, model: config.model, resolution: config.resolution, ratio: config.ratio, width: config.width, height: config.height, size: config.size, quality: config.quality, responseFormat: config.responseFormat || "url", referenceImageMode: config.referenceImageMode || "file", outputDir: config.outputDir, imageDownloadProxyEnabled: Boolean(config.imageDownloadProxyEnabled), imageDownloadProxy: config.imageDownloadProxy || "", apiKey: apiKeyDraft.trim() || undefined }) });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || cn.saveFailed);
       setConfig((current) => ({ ...current, ...result.config })); setSaveState("saved");

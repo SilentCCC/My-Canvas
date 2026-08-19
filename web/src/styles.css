@@ -284,9 +284,13 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .settings-aside { align-self: start; margin-top: 19px; padding: 17px; border-left: 1px solid var(--border); }
 .aside-heading { display: flex; align-items: flex-start; gap: 10px; }
 .aside-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 7px; color: var(--blue); background: rgba(134,169,233,.13); }
+.advanced-settings-icon { color: var(--accent); background: rgba(242,184,102,.13); }
 .aside-heading strong, .aside-heading span { display: block; }
 .aside-heading strong { font-size: 12px; font-weight: 600; }
 .aside-heading span { margin-top: 5px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.advanced-settings-fields .field-label { margin-top: 17px; }
+.advanced-settings-fields .field-label:first-child { margin-top: 20px; }
+.settings-aside-divider { height: 1px; margin: 24px 0; background: var(--border); }
 .config-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 
 .history-view { background: #10131a; }

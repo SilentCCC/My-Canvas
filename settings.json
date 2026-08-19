@@ -1,5 +1,5 @@
 {
   "port": 8000,
   "imageDownloadProxy": "7897",
-  "imageDownloadProxyEnabled": true
+  "imageDownloadProxyEnabled": false
 }
