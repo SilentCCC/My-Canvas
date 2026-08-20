@@ -770,7 +770,7 @@ function Sidebar({ activePanel, setActivePanel, collapsed, setCollapsed, canvase
         </button>
         {!collapsed && <div className="canvas-list">{canvases.map((canvas) => <div key={canvas.id} className={`canvas-list-item ${canvas.id === activeCanvasId ? "is-active" : ""}`}><button className="canvas-select-button" onClick={() => onSelectCanvas(canvas.id)} title={canvas.name}><Layers3 size={14} /><span>{canvas.name}</span></button><button className="canvas-rename-button" onClick={(event) => { event.stopPropagation(); onRenameCanvas(canvas.id); }} aria-label={cn.renameCanvas} title={cn.renameCanvas}><Pencil size={13} /></button>{canvases.length > 1 && <button className="canvas-delete-button" onClick={(event) => { event.stopPropagation(); onDeleteCanvas(canvas.id); }} aria-label={cn.deleteCanvas} title={cn.deleteCanvas}><Trash2 size={13} /></button>}</div>)}</div>}
       </div>
-      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.6</span></div>}
+      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.7</span></div>}
     </aside>
   );
 }

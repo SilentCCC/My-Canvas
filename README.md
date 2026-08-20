@@ -1,6 +1,6 @@
 # AI Canvas
 
-当前版本：`V1.1.6`
+当前版本：`V1.1.7`
 
 更新记录请查看 [CHANGELOG.md](CHANGELOG.md)。
 

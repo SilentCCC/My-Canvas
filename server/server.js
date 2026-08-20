@@ -114,12 +114,26 @@ function imageUrlReferenceFields(referenceImages) {
   return referenceImages.length === 1 ? { image_url: referenceImages[0] } : { image_urls: referenceImages };
 }
 
+function requestLogValue(value, key = "") {
+  if (/^(b64_json|b64Json|base64|image_base64|imageBase64|inlineData|inline_data)$/i.test(key)) {
+    return "[image data omitted]";
+  }
+  if (typeof value === "string" && /^data:[^;,]+;base64,/i.test(value)) {
+    return "[image data omitted]";
+  }
+  if (Array.isArray(value)) return value.map((item) => requestLogValue(item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([entryKey, entryValue]) => [entryKey, requestLogValue(entryValue, entryKey)]));
+  }
+  return value;
+}
+
 function imageRequestText(url, contentType, body) {
   return JSON.stringify({
     url,
     method: "POST",
     headers: { Authorization: "Bearer [hidden]", "Content-Type": contentType },
-    body
+    body: requestLogValue(body)
   }, null, 2);
 }
 

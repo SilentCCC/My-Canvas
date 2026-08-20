@@ -27,9 +27,9 @@
 ## 当前开发状态
 
 - 当前版本号：
-  - 统一版本：`V1.1.6`
-  - `package.json` / `package-lock.json`：`1.1.6`
-  - README 显示版本：`V1.1.6`
+  - 统一版本：`V1.1.7`
+  - `package.json` / `package-lock.json`：`1.1.7`
+  - README 显示版本：`V1.1.7`
   - 版本规则：每次代码功能或行为修改时，必须递增补丁版本号；例如 `V1.0.37` 修改后为 `V1.0.38`。同步更新 `package.json`、`package-lock.json`、README、`CHANGELOG.md` 和本文件。仅补充或修正 `CHANGELOG.md` 时不递增版本号。
 
 ### 已完成的功能
