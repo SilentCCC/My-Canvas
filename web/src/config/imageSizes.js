@@ -6,8 +6,14 @@ export const SUPPORTED_IMAGE_MODELS = [
   "grok-imagine-image",
   "grok-imagine-image-2.0",
   "grok-imagine-image-quality",
+  "grok4.3-img",
+  "grok4.5-img",
   "gemini-3-pro-image-preview",
-  "gemini-3.1-flash-image-preview"
+  "gemini-3.1-flash-image-preview",
+  "gemini-3-pro-image",
+  "gemini-3.1-flash-image",
+  "gemini-2.5-flash-image-preview",
+  "gemini-2.5-flash-image"
 ];
 
 export const IMAGE_SIZE_CONFIG = {
@@ -90,9 +96,19 @@ export const IMAGE_SIZE_CONFIG = {
 
 IMAGE_SIZE_CONFIG["grok-imagine-image-quality"] = IMAGE_SIZE_CONFIG["grok-imagine-image"];
 IMAGE_SIZE_CONFIG["grok-imagine-image-2.0"] = IMAGE_SIZE_CONFIG["grok-imagine-image"];
+IMAGE_SIZE_CONFIG["grok4.3-img"] = IMAGE_SIZE_CONFIG["grok-imagine-image"];
+IMAGE_SIZE_CONFIG["grok4.5-img"] = IMAGE_SIZE_CONFIG["grok-imagine-image"];
+for (const model of [
+  "gemini-3-pro-image-preview",
+  "gemini-3.1-flash-image-preview",
+  "gemini-3-pro-image",
+  "gemini-3.1-flash-image",
+  "gemini-2.5-flash-image-preview",
+  "gemini-2.5-flash-image"
+]) IMAGE_SIZE_CONFIG[model] = IMAGE_SIZE_CONFIG[DEFAULT_IMAGE_MODEL];
 
 function isGrokImageModel(model) {
-  return /(^|\/)grok-imagine-image(?:-2\.0|-quality)?$/i.test(String(model || "").trim());
+  return /(^|\/)(?:grok-imagine-image(?:-2\.0|-quality)?|grok4\.(?:3|5)-img)$/i.test(String(model || "").trim());
 }
 
 function configForModel(model) {

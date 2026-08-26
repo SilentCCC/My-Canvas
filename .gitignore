@@ -3,6 +3,7 @@ node_modules/
 web/dist/
 output/
 server/config.json
+data/workspace.json
 *.log
 .env
 .env.*

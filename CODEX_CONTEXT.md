@@ -18,7 +18,7 @@
   - 存储：
     - API 配置：`server/config.json`（本地私密文件，Git 忽略）
     - 配置模板：`server/config.example.json`
-    - 画布状态：浏览器 `localStorage`
+    - 画布状态：默认浏览器 `localStorage`；可在设置的高级设置中切换为项目 `data/workspace.json`
     - 生成历史：浏览器 `localStorage`
     - 自动保存图片：配置中的 `outputDir`
   - Git 分支：`main`
@@ -27,9 +27,9 @@
 ## 当前开发状态
 
 - 当前版本号：
-  - 统一版本：`V1.1.7`
-  - `package.json` / `package-lock.json`：`1.1.7`
-  - README 显示版本：`V1.1.7`
+  - 统一版本：`V1.1.35`
+  - `package.json` / `package-lock.json`：`1.1.35`
+  - README 显示版本：`V1.1.35`
   - 版本规则：每次代码功能或行为修改时，必须递增补丁版本号；例如 `V1.0.37` 修改后为 `V1.0.38`。同步更新 `package.json`、`package-lock.json`、README、`CHANGELOG.md` 和本文件。仅补充或修正 `CHANGELOG.md` 时不递增版本号。
 
 ### 已完成的功能
@@ -41,15 +41,16 @@
 - API 设置页：
   - 多 API 配置档管理。
   - 支持新建、切换、删除配置档。
+  - 配置档支持长按/拖动调整顺序，顺序会保存并同步到工作区中的 Prompt 节点和效果对比窗口。
   - 左侧菜单显示已保存的 API 配置档，例如 API1、API2。
   - API Key 保存后不回传浏览器。
   - 已保存 API Key 在输入框中显示 `****************` 掩码。
   - API Key 输入框支持眼睛图标切换当前草稿明文/隐藏。
   - 支持导入/导出 JSON 配置。
   - 自动保存输出目录配置。
-  - 支持配置服务端图片下载代理开关，默认关闭；开启后兼容 HTTP、HTTPS 和 SOCKS 地址。
-  - 右侧“高级设置”区域集中显示图片下载代理开关、代理端口、返回格式和参考图传输方式；这些选项按 API 配置档独立保存。
-  - 图片下载代理使用 Node.js 原生 HTTP/HTTPS/TLS 流式请求，避免 Windows curl 的 Schannel 凭证错误；支持 HTTP、HTTPS 和 SOCKS 代理。
+  - 支持配置服务端代理开关，默认关闭；开启后兼容 HTTP、HTTPS 和 SOCKS 地址，并用于图片下载和获取模型列表。
+  - 右侧“高级设置”区域集中显示代理开关、代理端口、返回格式、参考图传输方式和图生图接口；这些选项按 API 配置档独立保存。
+  - 代理使用 Node.js 原生 HTTP/HTTPS/TLS 流式请求，避免 Windows curl 的 Schannel 凭证错误；支持 HTTP、HTTPS 和 SOCKS 代理。
 - Prompt 节点：
   - 编辑 Prompt。
   - 节点内可选择 API 配置档，直接显示 API1/API2/API3，不显示“当前 API”占位项。
@@ -68,12 +69,12 @@
   - 生成按钮在已有任务进行时仍可点击，同一个 Prompt 支持并发生成多批图片。
 - 图片尺寸选择：
   - 设置页和 Prompt 节点均使用联动的“分辨率等级 + 比例”选择框。
-  - image2 和 Gemini 的尺寸菜单顺序为 `auto`、`1K`、`2K`、`4K`；Grok 菜单为 `auto`、`1K`、`2K`。选择 `auto` 后隐藏比例/具体尺寸选择框；image2/Gemini 发送 `size: "auto"`，Grok 发送 `aspect_ratio: "auto"` 且不发送 `resolution`。
-  - GPT image2 和 Gemini 保持原有尺寸行为，生成 API 发送最终的 `size`。
-  - Grok Imagine（`grok-imagine-image`、`grok-imagine-image-2.0`、`grok-imagine-image-quality`）使用独立尺寸配置，只提供官方支持的比例及 `1K`、`2K`；Grok 2.0 文生图走 `/images/generations`，单图编辑走 `/images/edits` 并发送 `image: { type: "image_url", url }`，多图编辑发送 `images: [{ type: "image_url", url }]`；参考图支持公开 URL 和 Base64 data URL。其他 Grok 模型继续走原有兼容请求。
+  - image2 和 Gemini 的尺寸菜单顺序为 `auto`、`1K`、`2K`、`4K`；Grok 菜单为 `auto`、`1K`、`2K`。选择 `auto` 后隐藏比例/具体尺寸选择框；image2 发送 `size`，Gemini 原生请求发送 `generationConfig.imageConfig.imageSize/aspectRatio`，Grok 发送 `aspect_ratio: "auto"` 且不发送 `resolution`。
+  - Gemini 图片模型使用 `/v1beta/models/{model}:generateContent`，请求体为 `contents[].parts[]`；参考图转换为 `inlineData`，请求和 808relay 异步任务轮询同时发送 `x-goog-api-key` 与 Bearer 鉴权；开启配置档代理时，生成请求和异步任务轮询也通过该代理；异步任务响应通过 `/v1/images/tasks/{task_id}` 轮询。
+  - Grok 图片模型（`grok-imagine-image`、`grok-imagine-image-2.0`、`grok-imagine-image-quality`、`grok4.3-img`、`grok4.5-img`）使用独立尺寸配置，只提供官方支持的比例及 `1K`、`2K`；Grok 2.0 文生图走 `/images/generations`，单图编辑走 `/images/edits` 并发送 `image: { image_url }`，多图编辑发送 `images: [{ image_url }]`；参考图支持公开 URL 和 Base64 data URL。其他模型继续走原有兼容请求。
   - 选择数据保存为 `resolution`、`ratio`、`width`、`height`、`size`；请求信息窗口按模型显示实际发送的尺寸字段。
   - GPT Image 2 的固定尺寸遵循文档约束：最大边长不超过 `3840`、宽高为 `16` 的倍数、总像素在 `655,360` 到 `8,294,400` 之间、长宽比不超过 `3:1`。
-  - `gpt-image-2` 图生图的 HTTP(S) URL 参考图为实验性兼容模式：单图 JSON 发送 `image_url`，多图发送 `image_urls`；只有所有参考图均为 HTTP(S) URL 时才启用。本地上传或 Base64 参考图继续下载/转换并使用 multipart 文件上传。
+  - `gpt-image-2` 图生图的 HTTP(S) URL 参考图为实验性兼容模式：单图 JSON 发送 `image_url`，多图发送 `image_urls`；只有所有参考图均为 HTTP(S) URL 时才启用。本地上传或 Base64 参考图继续下载/转换并使用 multipart 文件上传。Gemini 图生图统一使用原生 `inlineData`，HTTP(S) 参考图先下载后编码。
   - 图片左下角叹号保存实际第三方 API 请求信息，包括 URL、方法、脱敏请求头和请求体；右下角叹号显示完整第三方 JSON 结构和非图片字段，Base64 图片内容替换为占位文本。API Key 与本地参考图 Base64 不写入请求记录；写入浏览器缓存时会压缩返回中的 Base64 图片数据，避免存储配额被占满。
   - API 配置档独立保存 `referenceImageMode`：`file` 为原有 multipart 文件上传，`url` 为 `gpt-image-2` 和 Gemini 图像模型的 HTTP(S) URL 直传实验模式；默认值为 `file`。
   - 尺寸映射独立维护在 `web/src/config/imageSizes.js`。
@@ -113,6 +114,10 @@
   - 编组连接到 Prompt 后，执行 Prompt 会将组内每张图片分别作为输入，自动创建多个生成任务和结果节点。
   - 默认窗口已加宽，选中后可拖动右下角缩放手柄自由调整宽高。
   - 新建图片编组节点默认使用正方形宽高。
+  - 编组底部提供“拼图方式”“分辨率依据”和“拼图”控件；左右拼图默认按最大高度、上下拼图默认按最小宽度等比例合成，并生成新的图片节点。
+  - 编组内图片支持长按拖动调整左右顺序；“打开 URL”按钮位于生成图片卡片底部标题栏，不会遮挡底部实际分辨率。
+- 画布支持 Shift 框选多个图片，将任意已选图片节点拖到图片编组窗口即可批量加入；Ctrl 拖动切线可删除相交连线，Ctrl+点击连线可删除单条连线。
+- 本地文件工作区保存使用 250ms 防抖、串行队列和临时文件原子替换，减少刷新时旧请求覆盖或半写入导致的工作区丢失。
 - 生成日志：
   - 顶部工具栏增加日志按钮。
   - 弹出悬浮框显示每次生成的成功/失败、Prompt、服务端返回文本。
@@ -154,6 +159,26 @@
 - 未做浏览器自动化 UI 回归测试。
 
 ## 最近开发记录
+
+### 2026-08-27（Gemini 兼容性与请求格式）
+
+- 修改内容：补充 Gemini 图片模型识别和原生请求说明。
+- 涉及文件：
+  - `server/server.js`
+  - `web/src/config/imageSizes.js`
+  - `README.md`
+  - `CHANGELOG.md`
+- 已完成：
+  - 兼容 `gemini-2.5-flash-image`、`gemini-3-pro-image`、`gemini-3.1-flash-image` 及对应 `-preview` 名称。
+  - Gemini 请求使用 `/v1beta/models/{model}:generateContent`，请求体包含 `contents[].parts[]`、`generationConfig.responseModalities` 和 `imageConfig.imageSize/aspectRatio`。
+  - 参考图使用 `inlineData`；请求与异步任务轮询同时支持配置档代理，并发送 `Authorization` 与 `x-goog-api-key`。
+  - 修复新模型被误判为普通 OpenAI 图片模型、错误请求 `/images/generations` 的问题。
+- 验证结果：`node --check server/server.js`、`npm.cmd run build`、`git diff --check` 通过。
+- 建议提交信息：
+
+```text
+fix: support Gemini image model variants and native requests
+```
 
 ### 2026-08-07
 

@@ -1,5 +1,6 @@
 {
   "port": 8000,
   "imageDownloadProxy": "7897",
-  "imageDownloadProxyEnabled": false
+  "imageDownloadProxyEnabled": false,
+  "workspaceStorageMode": "file"
 }

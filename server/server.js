@@ -11,6 +11,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "..");
 const configPath = path.join(__dirname, "config.json");
 const settingsPath = path.join(projectRoot, "settings.json");
+const workspacePath = path.join(projectRoot, "data", "workspace.json");
+let workspaceWriteQueue = Promise.resolve();
 const distPath = path.join(projectRoot, "web", "dist");
 function configuredPort(value) {
   const candidate = Number(value);
@@ -35,6 +37,9 @@ function normalizeImageDownloadProxy(value) {
 function normalizeImageDownloadProxyEnabled(value) {
   return value === true || value === "true";
 }
+function normalizeWorkspaceStorageMode(value) {
+  return ["browser", "file", "auto"].includes(String(value || "").toLowerCase()) ? String(value).toLowerCase() : "browser";
+}
 function configuredImageDownloadProxy(profile) {
   if (!profile || !normalizeImageDownloadProxyEnabled(profile.imageDownloadProxyEnabled)) return "";
   try { return normalizeImageDownloadProxy(profile.imageDownloadProxy); } catch { return ""; }
@@ -44,6 +49,7 @@ const defaultOutputDir = path.join(projectRoot, "output");
 const legacyDefaultOutputDir = "E:\\Canvas\\output";
 const imageGenerationTimeoutMs = 180_000;
 const imageDownloadTimeoutMs = 60_000;
+const modelFetchTimeoutMs = 30_000;
 const imageDownloadRetryDelaysMs = [0, 1_000, 3_000];
 const verifiedImageResponseOptions = { n: 1 };
 const imageSaveJobs = new Map();
@@ -66,6 +72,7 @@ const defaultProfile = {
   quality: "high",
   responseFormat: "url",
   referenceImageMode: "file",
+  imageEditEndpointMode: "auto",
   outputDir: defaultOutputDir,
   imageDownloadProxyEnabled: false,
   imageDownloadProxy: ""
@@ -85,13 +92,20 @@ function editsUrl(endpoint) {
   return `${normalized}/images/edits`;
 }
 
+function imageEditUrl(endpoint, mode = "auto") {
+  const normalizedMode = String(mode || "auto").toLowerCase();
+  const normalizedEndpoint = cleanEndpoint(endpoint);
+  if (normalizedMode === "generations" || (normalizedMode === "auto" && /\/images\/generations$/i.test(normalizedEndpoint))) return generationUrl(endpoint);
+  return editsUrl(endpoint);
+}
+
 function modelsUrl(endpoint) {
   const normalized = cleanEndpoint(endpoint).replace(/\/images\/(generations|edits)$/i, "").replace(/\/models$/i, "");
   return `${normalized}/models`;
 }
 
 function isGrokImageModel(model) {
-  return /(^|\/)grok-imagine-image(?:-2\.0|-quality)?$/i.test(String(model || "").trim());
+  return /(^|\/)(?:grok-imagine-image(?:-2\.0|-quality)?|grok4\.(?:3|5)-img)$/i.test(String(model || "").trim());
 }
 
 function isGrokImageJsonModel(model) {
@@ -103,7 +117,128 @@ function isGptImage2Model(model) {
 }
 
 function isGeminiImageModel(model) {
-  return /(^|\/)(?:gemini-3-pro-image-preview|gemini-3\.1-flash-image-preview)$/i.test(String(model || "").trim());
+  return /(^|\/)(?:gemini-(?:2\.5-flash-image(?:-preview)?|3-pro-image(?:-preview)?|3\.1-flash-image(?:-preview)?))$/i.test(String(model || "").trim());
+}
+
+function geminiBaseEndpoint(endpoint) {
+  return cleanEndpoint(endpoint)
+    .replace(/\/images\/(?:generations|edits)$/i, "")
+    .replace(/\/v1beta\/models\/[^/]+:generateContent$/i, "")
+    .replace(/\/v1beta$/i, "")
+    .replace(/\/v1$/i, "");
+}
+
+function geminiGenerateContentUrl(endpoint, model) {
+  return `${geminiBaseEndpoint(endpoint)}/v1beta/models/${encodeURIComponent(String(model || "").trim())}:generateContent`;
+}
+
+function geminiTasksUrl(endpoint, taskId) {
+  return `${geminiBaseEndpoint(endpoint)}/v1/images/tasks/${encodeURIComponent(String(taskId || "").trim())}`;
+}
+
+function geminiImageSize(resolution) {
+  const value = String(resolution || "").trim().toUpperCase();
+  return ["1K", "2K", "4K"].includes(value) ? value : "";
+}
+
+function geminiAspectRatio(ratio) {
+  const value = String(ratio || "").trim();
+  return value && value !== "auto" && value !== "custom" ? value : "";
+}
+
+function geminiAuthHeaders(apiKey) {
+  // Google-compatible gateways use x-goog-api-key; Bearer keeps existing
+  // OpenAI-compatible Gemini gateways working during the transition.
+  return { Authorization: `Bearer ${apiKey}`, "x-goog-api-key": apiKey };
+}
+
+async function inlineGeminiImage(value, proxyUrl = "") {
+  const input = String(value || "").trim();
+  if (input.startsWith("data:")) {
+    const match = input.match(/^data:([^;,]+)?;base64,(.+)$/i);
+    if (!match) throw new Error("Gemini 参考图 Base64 格式无效。");
+    return { mimeType: match[1] || "image/png", data: match[2] };
+  }
+  if (!isHttpImageUrl(input)) throw new Error("Gemini 参考图必须是 HTTP(S) URL 或 Base64 图片。");
+  try {
+    if (proxyUrl) {
+      const remoteImage = await requestRemoteImageWithProxy(input, imageDownloadTimeoutMs, proxyUrl);
+      return { mimeType: String(remoteImage.contentType || "image/png").split(";")[0].trim() || "image/png", data: remoteImage.buffer.toString("base64") };
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), imageDownloadTimeoutMs);
+    try {
+      const response = await fetch(input, { signal: controller.signal, headers: imageDownloadHeaders });
+      if (!response.ok) throw new Error(`Gemini 参考图下载返回 ${response.status}。`);
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!bytes.length) throw new Error("Gemini 参考图为空。");
+      const contentType = String(response.headers.get("content-type") || "image/png").split(";")[0].trim() || "image/png";
+      return { mimeType: contentType, data: bytes.toString("base64") };
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (error) {
+    if (error?.name === "AbortError") throw new Error("Gemini 参考图下载超时（60 秒）。");
+    throw error;
+  }
+}
+
+async function geminiRequestBody(prompt, referenceImages, ratio, resolution, proxyUrl = "") {
+  const parts = [{ text: prompt }];
+  for (const referenceImage of referenceImages) parts.push({ inlineData: await inlineGeminiImage(referenceImage, proxyUrl) });
+  const imageConfig = {};
+  const aspectRatio = geminiAspectRatio(ratio);
+  const imageSize = geminiImageSize(resolution);
+  if (aspectRatio) imageConfig.aspectRatio = aspectRatio;
+  if (imageSize) imageConfig.imageSize = imageSize;
+  return {
+    contents: [{ role: "user", parts }],
+    generationConfig: {
+      responseModalities: ["TEXT", "IMAGE"],
+      ...(Object.keys(imageConfig).length ? { imageConfig } : {})
+    }
+  };
+}
+
+function geminiTaskId(payload) {
+  if (!payload || typeof payload !== "object") return "";
+  return String(payload.task_id || payload.taskId || payload.id || payload.data?.task_id || payload.data?.taskId || "").trim();
+}
+
+function geminiTaskStatus(payload) {
+  return String(payload?.status || payload?.state || payload?.phase || payload?.data?.status || "").trim().toLowerCase();
+}
+
+async function waitForGeminiTask(endpoint, apiKey, initialPayload, proxyUrl = "") {
+  const taskId = geminiTaskId(initialPayload);
+  if (!taskId || getImageFromPayload(initialPayload)) return initialPayload;
+  const startedAt = Date.now();
+  let payload = initialPayload;
+  while (Date.now() - startedAt < imageGenerationTimeoutMs) {
+    const status = geminiTaskStatus(payload);
+    if (["failed", "error", "cancelled", "canceled", "rejected", "expired"].includes(status)) return payload;
+    if (getImageFromPayload(payload)) return payload;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), modelFetchTimeoutMs);
+    try {
+      let response;
+      let bodyText;
+      if (proxyUrl) {
+        const result = await requestTextWithProxy(geminiTasksUrl(endpoint, taskId), modelFetchTimeoutMs, proxyUrl, geminiAuthHeaders(apiKey));
+        response = { ok: result.status >= 200 && result.status < 300, status: result.status };
+        bodyText = result.bodyText;
+      } else {
+        response = await fetch(geminiTasksUrl(endpoint, taskId), { headers: geminiAuthHeaders(apiKey), signal: controller.signal });
+        bodyText = await response.text();
+      }
+      try { payload = JSON.parse(bodyText); } catch { payload = { error: { message: bodyText }, status: "failed" }; }
+      if (!response.ok) return payload;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw Object.assign(new Error("Gemini 图片任务超时（180 秒）。"), { code: "IMAGE_GENERATION_TIMEOUT" });
 }
 
 function isHttpImageUrl(value) {
@@ -128,11 +263,11 @@ function requestLogValue(value, key = "") {
   return value;
 }
 
-function imageRequestText(url, contentType, body) {
+function imageRequestText(url, contentType, body, extraHeaders = {}) {
   return JSON.stringify({
     url,
     method: "POST",
-    headers: { Authorization: "Bearer [hidden]", "Content-Type": contentType },
+    headers: { Authorization: "Bearer [hidden]", "Content-Type": contentType, ...extraHeaders },
     body: requestLogValue(body)
   }, null, 2);
 }
@@ -165,7 +300,9 @@ function grokQualityField(model, quality) {
 }
 
 function grokReferenceImageFields(referenceImages) {
-  const images = referenceImages.map((url) => ({ type: "image_url", url }));
+  // xAI's edits endpoint validates each reference item through its
+  // compatibility field `image_url` (including entries in `images`).
+  const images = referenceImages.map((url) => ({ image_url: url }));
   return images.length === 1 ? { image: images[0] } : { images };
 }
 
@@ -260,6 +397,18 @@ async function fetchImageGeneration(input, init) {
   }
 }
 
+async function fetchGeminiGenerationWithProxy(input, apiKey, body, proxyUrl) {
+  const result = await requestTextWithProxy(input, imageGenerationTimeoutMs, proxyUrl, {
+    ...geminiAuthHeaders(apiKey),
+    "Content-Type": "application/json",
+    "Content-Length": String(Buffer.byteLength(body))
+  }, "POST", body);
+  return {
+    response: { ok: result.status >= 200 && result.status < 300, status: result.status },
+    bodyText: result.bodyText
+  };
+}
+
 async function imageBlobFromInput(value) {
   const input = String(value || "");
   if (input.startsWith("data:")) {
@@ -289,6 +438,7 @@ function sanitizeProfile(profile, index = 0) {
     quality: String(source.quality || defaultProfile.quality).trim() || defaultProfile.quality,
     responseFormat: source.responseFormat === "b64_json" ? "b64_json" : "url",
     referenceImageMode: source.referenceImageMode === "url" ? "url" : "file",
+    imageEditEndpointMode: ["auto", "edits", "generations"].includes(String(source.imageEditEndpointMode || "").toLowerCase()) ? String(source.imageEditEndpointMode).toLowerCase() : defaultProfile.imageEditEndpointMode,
     outputDir: requestedOutputDir && requestedOutputDir !== legacyDefaultOutputDir ? requestedOutputDir : defaultProfile.outputDir,
     imageDownloadProxyEnabled: normalizeImageDownloadProxyEnabled(source.imageDownloadProxyEnabled),
     imageDownloadProxy: String(source.imageDownloadProxy || "").trim()
@@ -349,6 +499,7 @@ function publicProfile(profile) {
     quality: profile.quality,
     responseFormat: profile.responseFormat,
     referenceImageMode: profile.referenceImageMode,
+    imageEditEndpointMode: profile.imageEditEndpointMode,
     outputDir: profile.outputDir,
     imageDownloadProxyEnabled: Boolean(profile.imageDownloadProxyEnabled),
     imageDownloadProxy: profile.imageDownloadProxy || "",
@@ -411,8 +562,10 @@ function getImageFromPayload(payload) {
 function providerResponseText(payload, fallback = "") {
   if (!payload || typeof payload !== "object") return String(fallback || "");
   return JSON.stringify(payload, (key, value) => {
-    if (/^(b64_json|b64Json|base64)$/i.test(key)) return "[image data omitted]";
-    if (typeof value === "string" && /^data:image\//i.test(value) && value.length > 512) return "[image data omitted]";
+    if (/^(b64_json|b64Json|base64)$/i.test(key)) return "[image data omitted from response]";
+    if (key === "data" && this && typeof value === "string" && (this.mimeType || this.mime_type)) return "[image data omitted from response]";
+    if (key === "data" && typeof value === "string" && value.length > 512) return "[long data omitted from response]";
+    if (typeof value === "string" && /^data:image\//i.test(value) && value.length > 512) return "[image data omitted from response]";
     return value;
   }, 2);
 }
@@ -623,6 +776,59 @@ async function requestRemoteImageWithProxy(imageUrl, timeoutMs, proxyUrl, redire
   });
 }
 
+async function requestTextWithProxy(requestUrl, timeoutMs, proxyUrl, headers = {}, method = "GET", requestBody = "", redirectCount = 0) {
+  if (redirectCount > 5) throw new Error("模型请求重定向次数过多。");
+  const target = new URL(requestUrl);
+  const proxy = new URL(proxyUrl);
+  if (!["http:", "https:"].includes(target.protocol)) throw new Error("模型地址只支持 HTTP 或 HTTPS。");
+  if (!["http:", "https:", "socks4:", "socks4a:", "socks5:", "socks5h:"].includes(proxy.protocol)) throw new Error("代理协议不受支持。");
+  const socket = proxy.protocol.startsWith("socks") ? await connectSocksProxy(proxy, target, timeoutMs) : await connectHttpProxy(proxy, target, timeoutMs);
+  return new Promise((resolve, reject) => {
+    const transport = target.protocol === "https:" ? https : http;
+    const request = transport.request({ hostname: target.hostname, port: target.port || (target.protocol === "https:" ? 443 : 80), path: `${target.pathname || "/"}${target.search || ""}`, method, headers, agent: false, socket }, (response) => {
+      const status = Number(response.statusCode || 0);
+      if (status >= 300 && status < 400 && response.headers.location) {
+        response.resume();
+        socket.destroy();
+        const redirectedUrl = new URL(response.headers.location, target).toString();
+        requestTextWithProxy(redirectedUrl, timeoutMs, proxyUrl, headers, method, requestBody, redirectCount + 1).then(resolve, reject);
+        return;
+      }
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => resolve({ status, bodyText: Buffer.concat(chunks).toString("utf8") }));
+      response.on("error", reject);
+    });
+    const timer = setTimeout(() => request.destroy(new Error(`模型请求超时（${Math.round(timeoutMs / 1000)} 秒）。`)), timeoutMs);
+    request.setTimeout(timeoutMs, () => request.destroy(new Error(`模型请求超时（${Math.round(timeoutMs / 1000)} 秒）。`)));
+    request.once("close", () => clearTimeout(timer));
+    request.once("error", (error) => { clearTimeout(timer); reject(error); });
+    request.end(requestBody);
+  });
+}
+
+function modelFetchProxy(body, activeProfile) {
+  const proxyEnabled = Object.hasOwn(body || {}, "imageDownloadProxyEnabled")
+    ? normalizeImageDownloadProxyEnabled(body.imageDownloadProxyEnabled)
+    : normalizeImageDownloadProxyEnabled(activeProfile?.imageDownloadProxyEnabled);
+  if (!proxyEnabled) return "";
+  const proxyValue = Object.hasOwn(body || {}, "imageDownloadProxy") ? body.imageDownloadProxy : activeProfile?.imageDownloadProxy;
+  return normalizeImageDownloadProxy(proxyValue);
+}
+
+async function fetchModelsResponse(endpoint, apiKey, proxyUrl = "") {
+  const headers = { Authorization: `Bearer ${apiKey}` };
+  if (proxyUrl) return requestTextWithProxy(modelsUrl(endpoint), modelFetchTimeoutMs, proxyUrl, headers);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), modelFetchTimeoutMs);
+  try {
+    const response = await fetch(modelsUrl(endpoint), { headers, signal: controller.signal });
+    return { status: response.status, bodyText: await response.text() };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function saveImageToDisk(imageUrl, model, outputDir, imageDownloadProxy = "") {
   let buffer;
   let extension = "png";
@@ -726,6 +932,43 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, service: "ai-canvas", time: new Date().toISOString() });
 });
 
+app.get("/api/settings", (_req, res) => {
+  res.json({ ok: true, workspaceStorageMode: normalizeWorkspaceStorageMode(readAppSettings().workspaceStorageMode) });
+});
+
+app.post("/api/settings", async (req, res) => {
+  const settings = readAppSettings();
+  settings.workspaceStorageMode = normalizeWorkspaceStorageMode(req.body?.workspaceStorageMode);
+  await writeAppSettings(settings);
+  res.json({ ok: true, workspaceStorageMode: settings.workspaceStorageMode });
+});
+
+app.get("/api/workspace", async (_req, res) => {
+  try {
+    const workspace = JSON.parse(await fs.readFile(workspacePath, "utf8"));
+    res.json({ ok: true, workspace });
+  } catch (error) {
+    if (error?.code === "ENOENT") return res.json({ ok: true, workspace: null });
+    res.status(500).json({ ok: false, error: "读取本地工作区失败。" });
+  }
+});
+
+app.post("/api/workspace", async (req, res) => {
+  try {
+    const content = `${JSON.stringify(req.body?.workspace || {}, null, 2)}\n`;
+    workspaceWriteQueue = workspaceWriteQueue.catch(() => undefined).then(async () => {
+      await fs.mkdir(path.dirname(workspacePath), { recursive: true });
+      const temporaryPath = `${workspacePath}.${process.pid}.tmp`;
+      await fs.writeFile(temporaryPath, content, "utf8");
+      await fs.rename(temporaryPath, workspacePath);
+    });
+    await workspaceWriteQueue;
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ ok: false, error: "保存本地工作区失败。" });
+  }
+});
+
 app.get("/api/config", async (_req, res) => {
   res.json(publicConfig(await readConfig()));
 });
@@ -763,6 +1006,7 @@ app.post("/api/config", async (req, res) => {
     quality: body.quality ?? current.quality,
     responseFormat: body.responseFormat ?? current.responseFormat,
     referenceImageMode: body.referenceImageMode ?? current.referenceImageMode,
+    imageEditEndpointMode: body.imageEditEndpointMode ?? current.imageEditEndpointMode,
     outputDir: body.outputDir ?? current.outputDir,
     apiKey: typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey : current.apiKey,
     imageDownloadProxyEnabled: Object.hasOwn(body, "imageDownloadProxyEnabled") ? body.imageDownloadProxyEnabled : current.imageDownloadProxyEnabled,
@@ -792,6 +1036,17 @@ app.post("/api/config/profiles", async (req, res) => {
       state.profiles = state.profiles.filter((profile) => profile.id !== id);
       if (!state.profiles.some((profile) => profile.id === state.activeProfileId)) state.activeProfileId = state.profiles[0].id;
     }
+  } else if (action === "reorder") {
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.map((id) => String(id || "")).filter(Boolean)
+      : [];
+    const existingIds = state.profiles.map((profile) => profile.id);
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length !== existingIds.length || uniqueIds.some((id) => !existingIds.includes(id))) {
+      return res.status(400).json({ ok: false, error: "配置档顺序数据无效。" });
+    }
+    const profilesById = new Map(state.profiles.map((profile) => [profile.id, profile]));
+    state.profiles = uniqueIds.map((id) => profilesById.get(id));
   }
   await writeConfig(state);
   res.json({ ok: true, config: publicConfig(state) });
@@ -831,16 +1086,17 @@ app.post("/api/test", async (req, res) => {
 app.post("/api/models", async (req, res) => {
   const state = await readConfig();
   const active = activeProfile(state);
-  const endpoint = cleanEndpoint(req.body?.endpoint ?? active.endpoint);
-  const apiKey = String(req.body?.apiKey || active.apiKey || "").trim();
+  const body = req.body || {};
+  const endpoint = cleanEndpoint(body.endpoint ?? active.endpoint);
+  const apiKey = String(body.apiKey || active.apiKey || "").trim();
   if (!endpoint) return res.status(400).json({ ok: false, error: "\u8bf7\u5148\u586b\u5199 Endpoint \u5730\u5740\u3002" });
   if (!apiKey) return res.status(400).json({ ok: false, error: "\u5c1a\u672a\u914d\u7f6e API Key\u3002" });
   try {
-    const response = await fetch(modelsUrl(endpoint), { headers: { Authorization: `Bearer ${apiKey}` } });
-    const bodyText = await response.text();
+    const response = await fetchModelsResponse(endpoint, apiKey, modelFetchProxy(body, active));
+    const bodyText = response.bodyText;
     let payload = {};
     try { payload = JSON.parse(bodyText); } catch { /* Some providers return a non-JSON error body. */ }
-    if (!response.ok) return res.status(response.status).json({ ok: false, error: `\u83b7\u53d6\u6a21\u578b\u5931\u8d25\uff0c\u72b6\u6001\u7801 ${response.status}\u3002`, detail: providerResponseText(payload, bodyText) });
+    if (response.status < 200 || response.status >= 300) return res.status(response.status || 502).json({ ok: false, error: `\u83b7\u53d6\u6a21\u578b\u5931\u8d25\uff0c\u72b6\u6001\u7801 ${response.status || "unknown"}\u3002`, detail: providerResponseText(payload, bodyText) });
     res.json({ ok: true, models: modelIdsFromPayload(payload) });
   } catch (error) {
     res.status(502).json({ ok: false, error: error.message || "\u65e0\u6cd5\u83b7\u53d6\u6a21\u578b\u5217\u8868\u3002" });
@@ -863,6 +1119,7 @@ app.post("/api/generate", async (req, res) => {
   const requestedQuality = String(req.body?.quality || config.quality || defaultProfile.quality).trim().toLowerCase();
   const quality = ["low", "medium", "high"].includes(requestedQuality) ? requestedQuality : "";
   const responseFormat = config.responseFormat === "url" ? "url" : "b64_json";
+  const imageEditEndpoint = imageEditUrl(config.endpoint, config.imageEditEndpointMode);
   const referenceImages = (Array.isArray(req.body?.referenceImages) ? req.body.referenceImages : [req.body?.referenceImage]).map((value) => String(value || "").trim()).filter(Boolean).slice(0, 5);
   const grokJsonModel = isGrokImageJsonModel(model);
   let requestText = "";
@@ -870,7 +1127,22 @@ app.post("/api/generate", async (req, res) => {
     const apiRequestStartedAt = Date.now();
     let response;
     let bodyText;
-    if (grokJsonModel && referenceImages.length) {
+    if (isGeminiImageModel(model)) {
+      const requestBody = await geminiRequestBody(prompt, referenceImages, ratio, resolution, configuredImageDownloadProxy(config));
+      const requestUrl = geminiGenerateContentUrl(config.endpoint, model);
+      requestText = imageRequestText(requestUrl, "application/json", requestBody, { "x-goog-api-key": "[hidden]" });
+      const requestBodyText = JSON.stringify(requestBody);
+      const proxyUrl = configuredImageDownloadProxy(config);
+      if (proxyUrl) {
+        ({ response, bodyText } = await fetchGeminiGenerationWithProxy(requestUrl, apiKey, requestBodyText, proxyUrl));
+      } else {
+        ({ response, bodyText } = await fetchImageGeneration(requestUrl, {
+          method: "POST",
+          headers: { ...geminiAuthHeaders(apiKey), "Content-Type": "application/json" },
+          body: requestBodyText
+        }));
+      }
+    } else if (grokJsonModel && referenceImages.length) {
       const requestBody = {
         model,
         prompt,
@@ -879,8 +1151,8 @@ app.post("/api/generate", async (req, res) => {
         ...grokQualityField(model, quality),
         ...(responseFormat === "b64_json" ? { response_format: "b64_json" } : {})
       };
-      requestText = imageRequestText(generationUrl(config.endpoint), "application/json", requestBody);
-      ({ response, bodyText } = await fetchImageGeneration(generationUrl(config.endpoint), {
+      requestText = imageRequestText(imageEditEndpoint, "application/json", requestBody);
+      ({ response, bodyText } = await fetchImageGeneration(imageEditEndpoint, {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(requestBody)
@@ -896,8 +1168,8 @@ app.post("/api/generate", async (req, res) => {
         response_format: responseFormat,
         ...(responseFormat === "url" ? { output_format: "png" } : {})
       };
-      requestText = imageRequestText(editsUrl(config.endpoint), "application/json", requestBody);
-      ({ response, bodyText } = await fetchImageGeneration(editsUrl(config.endpoint), {
+      requestText = imageRequestText(imageEditEndpoint, "application/json", requestBody);
+      ({ response, bodyText } = await fetchImageGeneration(imageEditEndpoint, {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(requestBody)
@@ -917,7 +1189,7 @@ app.post("/api/generate", async (req, res) => {
       for (const [index, referenceImage] of referenceImages.entries()) {
         form.append(imageField, await imageBlobFromInput(referenceImage), `reference-${index + 1}.png`);
       }
-      requestText = imageRequestText(editsUrl(config.endpoint), "multipart/form-data", {
+      requestText = imageRequestText(imageEditEndpoint, "multipart/form-data", {
         model,
         prompt,
         ...(grokModel ? grokRequestSizeFields(ratio, resolution) : { size }),
@@ -925,7 +1197,7 @@ app.post("/api/generate", async (req, res) => {
         response_format: responseFormat,
         [imageField]: referenceImages.map(referenceImageRequestValue)
       });
-      ({ response, bodyText } = await fetchImageGeneration(editsUrl(config.endpoint), { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form }));
+      ({ response, bodyText } = await fetchImageGeneration(imageEditEndpoint, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form }));
     } else {
       const requestBody = grokModel
         ? { model, prompt, ...grokRequestSizeFields(ratio, resolution), ...(grokJsonModel ? grokQualityField(model, quality) : (quality ? { quality } : {})), ...(grokJsonModel ? {} : verifiedImageResponseOptions), ...(grokJsonModel ? (responseFormat === "b64_json" ? { response_format: "b64_json" } : {}) : { response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) }) }
@@ -939,6 +1211,7 @@ app.post("/api/generate", async (req, res) => {
     }
     let payload = {};
     try { payload = JSON.parse(bodyText); } catch { /* The provider may return a non-JSON error body. */ }
+    if (response.ok && isGeminiImageModel(model)) payload = await waitForGeminiTask(config.endpoint, apiKey, payload, configuredImageDownloadProxy(config));
     const responseText = providerResponseText(payload, bodyText);
     const rawResponseText = responseText;
     const apiRequestDurationMs = Date.now() - apiRequestStartedAt;
