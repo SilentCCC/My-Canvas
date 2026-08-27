@@ -8,6 +8,8 @@ export const SUPPORTED_IMAGE_MODELS = [
   "grok-imagine-image-quality",
   "grok4.3-img",
   "grok4.5-img",
+  "sensenova-u1.5-lite",
+  "sensenova-u1-fast",
   "gemini-3-pro-image-preview",
   "gemini-3.1-flash-image-preview",
   "gemini-3-pro-image",
@@ -98,6 +100,34 @@ IMAGE_SIZE_CONFIG["grok-imagine-image-quality"] = IMAGE_SIZE_CONFIG["grok-imagin
 IMAGE_SIZE_CONFIG["grok-imagine-image-2.0"] = IMAGE_SIZE_CONFIG["grok-imagine-image"];
 IMAGE_SIZE_CONFIG["grok4.3-img"] = IMAGE_SIZE_CONFIG["grok-imagine-image"];
 IMAGE_SIZE_CONFIG["grok4.5-img"] = IMAGE_SIZE_CONFIG["grok-imagine-image"];
+IMAGE_SIZE_CONFIG["sensenova-u1.5-lite"] = {
+  resolutions: [AUTO_IMAGE_RESOLUTION, "2K", "4K"],
+  ratios: ["1:1", "16:9", "9:16", "2:3", "3:2"],
+  sizes: {
+    [AUTO_IMAGE_RESOLUTION]: { "1:1": [2048, 2048] },
+    "2K": { "1:1": [2048, 2048], "16:9": [2720, 1536], "9:16": [1536, 2720], "2:3": [1664, 2496], "3:2": [2496, 1664] },
+    "4K": { "1:1": [4096, 4096] }
+  }
+};
+IMAGE_SIZE_CONFIG["sensenova-u1-fast"] = {
+  resolutions: ["1K"],
+  ratios: ["2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "1:1", "16:9", "9:16", "21:9", "9:21"],
+  sizes: {
+    "1K": {
+      "2:3": [1664, 2496],
+      "3:2": [2496, 1664],
+      "3:4": [1760, 2368],
+      "4:3": [2368, 1760],
+      "4:5": [1824, 2272],
+      "5:4": [2272, 1824],
+      "1:1": [2048, 2048],
+      "16:9": [2752, 1536],
+      "9:16": [1536, 2752],
+      "21:9": [3072, 1376],
+      "9:21": [1344, 3136]
+    }
+  }
+};
 for (const model of [
   "gemini-3-pro-image-preview",
   "gemini-3.1-flash-image-preview",
@@ -116,14 +146,21 @@ function configForModel(model) {
   return IMAGE_SIZE_CONFIG[model] || IMAGE_SIZE_CONFIG[DEFAULT_IMAGE_MODEL];
 }
 
-function normalizeCustomDimension(value, fallback) {
+function normalizeCustomDimension(value, fallback, model) {
   const numeric = Math.round(Number(value));
-  return Number.isFinite(numeric) && numeric > 0 ? Math.min(16384, numeric) : fallback;
+  if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
+  if (/sensenova-u1\.5-lite/i.test(String(model || ""))) return Math.max(512, Math.min(4096, Math.round(numeric / 32) * 32));
+  return Math.min(16384, numeric);
 }
 
-function customImageSizeSelection(width, height) {
-  const normalizedWidth = normalizeCustomDimension(width, 1024);
-  const normalizedHeight = normalizeCustomDimension(height, 1024);
+function customImageSizeSelection(model, width, height) {
+  const fallback = /sensenova-u1\.5-lite/i.test(String(model || "")) ? 512 : 1024;
+  let normalizedWidth = normalizeCustomDimension(width, fallback, model);
+  let normalizedHeight = normalizeCustomDimension(height, fallback, model);
+  if (/sensenova-u1\.5-lite/i.test(String(model || ""))) {
+    if (normalizedWidth > normalizedHeight * 3) normalizedWidth = Math.max(512, Math.floor(normalizedHeight * 3 / 32) * 32);
+    if (normalizedHeight > normalizedWidth * 3) normalizedHeight = Math.max(512, Math.floor(normalizedWidth * 3 / 32) * 32);
+  }
   return { resolution: CUSTOM_IMAGE_RESOLUTION, ratio: CUSTOM_IMAGE_RESOLUTION, width: normalizedWidth, height: normalizedHeight, size: `${normalizedWidth}x${normalizedHeight}` };
 }
 
@@ -136,24 +173,25 @@ function autoImageSizeSelection(model, ratio) {
 }
 
 export function getImageSizeSelection({ model, resolution = "1K", ratio = "1:1", width, height } = {}) {
-  if (resolution === CUSTOM_IMAGE_RESOLUTION && !isGrokImageModel(model)) return customImageSizeSelection(width, height);
+  if (resolution === CUSTOM_IMAGE_RESOLUTION && !isGrokImageModel(model)) return customImageSizeSelection(model, width, height);
   const config = configForModel(model);
   if (resolution === AUTO_IMAGE_RESOLUTION) return autoImageSizeSelection(model, ratio);
   const selectedResolution = config.resolutions.includes(resolution) ? resolution : config.resolutions[0];
-  const selectedRatio = config.ratios.includes(ratio) ? ratio : config.ratios[0];
+  const selectedRatio = config.sizes[selectedResolution]?.[ratio] ? ratio : Object.keys(config.sizes[selectedResolution] || {})[0];
   const [resolvedWidth, resolvedHeight] = config.sizes[selectedResolution][selectedRatio];
   return { resolution: selectedResolution, ratio: selectedRatio, width: resolvedWidth, height: resolvedHeight, size: `${resolvedWidth}x${resolvedHeight}` };
 }
 
-export function getImageSizeOptions(model) {
+export function getImageSizeOptions(model, resolution) {
   const config = configForModel(model);
-  return { resolutions: config.resolutions, ratios: config.ratios };
+  const ratios = resolution && config.sizes[resolution] ? Object.keys(config.sizes[resolution]) : config.ratios;
+  return { resolutions: config.resolutions, ratios };
 }
 
 export function normalizeImageSizeSelection({ model, resolution, ratio, size, width, height } = {}) {
   if (resolution === CUSTOM_IMAGE_RESOLUTION && !isGrokImageModel(model)) {
     const sizeMatch = String(size || "").match(/^(\d+)x(\d+)$/i);
-    return customImageSizeSelection(width ?? sizeMatch?.[1], height ?? sizeMatch?.[2]);
+    return customImageSizeSelection(model, width ?? sizeMatch?.[1], height ?? sizeMatch?.[2]);
   }
   const config = configForModel(model);
   const requestedSize = String(size || "");
@@ -161,7 +199,9 @@ export function normalizeImageSizeSelection({ model, resolution, ratio, size, wi
   for (const currentResolution of config.resolutions) {
     if (currentResolution === AUTO_IMAGE_RESOLUTION) continue;
     for (const currentRatio of config.ratios) {
-      const [width, height] = config.sizes[currentResolution][currentRatio];
+      const dimensions = config.sizes[currentResolution]?.[currentRatio];
+      if (!dimensions) continue;
+      const [width, height] = dimensions;
       if (requestedSize === `${width}x${height}`) return getImageSizeSelection({ model, resolution: currentResolution, ratio: currentRatio });
     }
   }

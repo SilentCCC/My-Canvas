@@ -114,7 +114,7 @@ button { color: inherit; }
 .canvas-node { position: relative; overflow: hidden; border: 1px solid #353b48; border-radius: 10px; color: var(--text); background: #181c25; box-shadow: 0 12px 35px rgba(0,0,0,.25); }
 .canvas-node.is-selected { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(242,184,102,.25), 0 14px 38px rgba(0,0,0,.3); }
 .prompt-node { width: 100%; min-width: 520px; height: 100%; min-height: 350px; box-sizing: border-box; container-type: inline-size; }
-.comparison-node { width: 760px; min-width: 720px; min-height: 390px; overflow: visible; }
+.comparison-node { width: 100%; height: 100%; min-width: 720px; min-height: 390px; box-sizing: border-box; overflow: visible; }
 .comparison-node-body { min-width: 0; }
 .comparison-node-rows { margin-top: 9px; }
 .comparison-node-row-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 3px; }
@@ -197,6 +197,8 @@ button { color: inherit; }
 .resizer-handle { width: 10px; height: 10px; border: 1px solid #151820; border-radius: 2px; background: var(--accent); }
 .canvas-node .react-flow__resize-control { z-index: 20; pointer-events: all; touch-action: none; }
 .react-flow__resize-control.handle.bottom.right.resizer-handle { width: 16px; height: 16px; translate: -100% -100%; border-color: #151820; border-radius: 4px; background: repeating-linear-gradient(135deg, var(--accent) 0 2px, #8d6635 2px 4px); box-shadow: 0 0 0 2px rgba(0,0,0,.25); }
+.comparison-node .react-flow__resize-control { z-index: 40; pointer-events: all; }
+.comparison-node .react-flow__resize-control.handle.bottom.right.resizer-handle { left: auto !important; top: auto !important; right: 7px !important; bottom: 7px !important; translate: 0 0; transform: none; cursor: nwse-resize; }
 .image-frame { position: relative; margin: 11px; aspect-ratio: 1 / 1; overflow: visible; border-radius: 6px; background: #10131a; }
 .image-frame img { display: block; width: 100%; height: 100%; border-radius: 6px; object-fit: contain; }
 .image-placeholder { display: flex; width: 100%; height: 100%; align-items: center; justify-content: center; flex-direction: column; gap: 10px; color: var(--muted); background: #10131a; font-size: 11px; }
@@ -349,13 +351,13 @@ select { appearance: none; background-image: linear-gradient(45deg, transparent 
 .log-entry pre { max-height: 220px; margin: 0; overflow: auto; padding: 9px; border-radius: 5px; color: #b8c2d0; background: #0c0f15; font: 10px/1.45 Consolas, "Courier New", monospace; white-space: pre-wrap; word-break: break-word; }
 .logs-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; min-height: 260px; color: var(--muted); font-size: 12px; }
 .comparison-window-layer { position: fixed; z-index: 50; inset: 0; pointer-events: none; }
-.comparison-dialog { position: absolute; top: 50%; left: 50%; display: flex; flex-direction: column; width: min(1120px, calc(100vw - 32px)); max-height: min(780px, calc(100vh - 32px)); overflow: hidden; transform: translate(-50%, -50%); border: 1px solid #353b48; border-radius: 10px; background: #181c25; box-shadow: 0 24px 60px rgba(0,0,0,.5); pointer-events: auto; }
+.comparison-dialog { position: absolute; top: 50%; left: 50%; display: flex; flex-direction: column; width: min(1120px, calc(100vw - 32px)); min-width: min(720px, calc(100vw - 32px)); min-height: min(420px, calc(100vh - 32px)); max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); overflow: hidden; resize: both; transform: translate(-50%, -50%); border: 1px solid #353b48; border-radius: 10px; background: #181c25; box-shadow: 0 24px 60px rgba(0,0,0,.5); pointer-events: auto; }
 .comparison-node-header { height: 42px; min-height: 42px; padding: 0 11px 0 13px; border-bottom-color: #2a303b; }
 .comparison-node-header { cursor: move; user-select: none; }
 .comparison-node-header > div { gap: 8px; }
 .comparison-node-header .node-icon { flex: 0 0 auto; }
 .comparison-node-header strong { font-size: 12px; font-weight: 550; }
-.comparison-content { display: grid; grid-template-columns: minmax(520px, 560px) minmax(0, 1fr); min-height: 0; }
+.comparison-content { display: grid; grid-template-columns: minmax(520px, 560px) minmax(0, 1fr); flex: 1; min-height: 0; }
 .comparison-form { display: flex; flex-direction: column; gap: 9px; min-height: 0; padding: 13px; border-right: 1px solid #2a303b; overflow: auto; }
 .comparison-prompt-label { margin-top: 0; }
 .comparison-prompt { min-height: 126px; resize: vertical; line-height: 1.55; }

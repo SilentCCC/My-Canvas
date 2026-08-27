@@ -1,10 +1,41 @@
+# Dependencies and package-manager cache
 node_modules/
+web/node_modules/
 .npm-cache/
+
+# Build output and generated images
+dist/
 web/dist/
 output/
+data/
+
+# Local secrets and environment files
 server/config.json
-data/workspace.json
-*.log
 .env
 .env.*
 !.env.example
+
+# Runtime logs and temporary files
+*.log
+*.pid
+*.tmp
+*.temp
+*.bak
+
+# Tool caches and reports
+.vite/
+web/.vite/
+coverage/
+
+# Operating-system and editor metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+
+# Local project notes (kept outside the minimal code upload)
+README.md
+CHANGELOG.md
+CODEX_CONTEXT.md
+HANDOFF.md

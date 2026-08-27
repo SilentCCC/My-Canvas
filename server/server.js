@@ -120,6 +120,42 @@ function isGeminiImageModel(model) {
   return /(^|\/)(?:gemini-(?:2\.5-flash-image(?:-preview)?|3-pro-image(?:-preview)?|3\.1-flash-image(?:-preview)?))$/i.test(String(model || "").trim());
 }
 
+function isSenseNovaImageModel(model) {
+  return /(^|\/)sensenova-u1(?:\.5-lite|-fast)$/i.test(String(model || "").trim());
+}
+
+function isSenseNovaU15LiteModel(model) {
+  return /(^|\/)sensenova-u1\.5-lite$/i.test(String(model || "").trim());
+}
+
+function isSenseNovaU1FastModel(model) {
+  return /(^|\/)sensenova-u1-fast$/i.test(String(model || "").trim());
+}
+
+function senseNovaSize(model, size, ratio) {
+  if (isSenseNovaU1FastModel(model)) {
+    const sizes = {
+      "2:3": "1664x2496", "3:2": "2496x1664", "3:4": "1760x2368", "4:3": "2368x1760",
+      "4:5": "1824x2272", "5:4": "2272x1824", "1:1": "2048x2048", "16:9": "2752x1536",
+      "9:16": "1536x2752", "21:9": "3072x1376", "9:21": "1344x3136"
+    };
+    return sizes[String(ratio || "").trim()] || "2752x1536";
+  }
+  return String(size || "auto").trim() || "auto";
+}
+
+function senseNovaRequestFields(model, size, ratio, responseFormat, { editing = false, watermark = true, promptExtend = true, outputFormat = "png" } = {}) {
+  return {
+    model,
+    size: senseNovaSize(model, size, ratio),
+    response_format: responseFormat,
+    watermark: Boolean(watermark),
+    ...(isSenseNovaU15LiteModel(model) ? { prompt_extend: Boolean(promptExtend) } : {}),
+    n: 1,
+    ...(isSenseNovaU15LiteModel(model) ? { output_format: ["png", "jpeg", "webp"].includes(outputFormat) ? outputFormat : "png" } : {})
+  };
+}
+
 function geminiBaseEndpoint(endpoint) {
   return cleanEndpoint(endpoint)
     .replace(/\/images\/(?:generations|edits)$/i, "")
@@ -304,6 +340,10 @@ function grokReferenceImageFields(referenceImages) {
   // compatibility field `image_url` (including entries in `images`).
   const images = referenceImages.map((url) => ({ image_url: url }));
   return images.length === 1 ? { image: images[0] } : { images };
+}
+
+function senseNovaReferenceImageFields(referenceImages) {
+  return { images: referenceImages.map((image_url) => ({ image_url })) };
 }
 
 function modelIdsFromPayload(payload) {
@@ -969,6 +1009,16 @@ app.post("/api/workspace", async (req, res) => {
   }
 });
 
+app.delete("/api/workspace", async (_req, res) => {
+  try {
+    workspaceWriteQueue = workspaceWriteQueue.catch(() => undefined).then(() => fs.rm(workspacePath, { force: true }));
+    await workspaceWriteQueue;
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ ok: false, error: "清除本地工作区失败。" });
+  }
+});
+
 app.get("/api/config", async (_req, res) => {
   res.json(publicConfig(await readConfig()));
 });
@@ -1118,6 +1168,9 @@ app.post("/api/generate", async (req, res) => {
   const grokModel = isGrokImageModel(model);
   const requestedQuality = String(req.body?.quality || config.quality || defaultProfile.quality).trim().toLowerCase();
   const quality = ["low", "medium", "high"].includes(requestedQuality) ? requestedQuality : "";
+  const watermark = req.body?.watermark !== false && req.body?.watermark !== "false";
+  const promptExtend = req.body?.promptExtend !== false && req.body?.promptExtend !== "false";
+  const outputFormat = ["png", "jpeg", "webp"].includes(String(req.body?.outputFormat || "").toLowerCase()) ? String(req.body.outputFormat).toLowerCase() : "png";
   const responseFormat = config.responseFormat === "url" ? "url" : "b64_json";
   const imageEditEndpoint = imageEditUrl(config.endpoint, config.imageEditEndpointMode);
   const referenceImages = (Array.isArray(req.body?.referenceImages) ? req.body.referenceImages : [req.body?.referenceImage]).map((value) => String(value || "").trim()).filter(Boolean).slice(0, 5);
@@ -1127,7 +1180,21 @@ app.post("/api/generate", async (req, res) => {
     const apiRequestStartedAt = Date.now();
     let response;
     let bodyText;
-    if (isGeminiImageModel(model)) {
+    if (isSenseNovaU1FastModel(model) && referenceImages.length) {
+      throw new Error("SenseNova U1 Fast 不支持参考图，请移除参考图后重试。");
+    } else if (isSenseNovaU15LiteModel(model) && referenceImages.length) {
+      const requestBody = {
+        ...senseNovaRequestFields(model, size, ratio, responseFormat, { editing: true, watermark, promptExtend, outputFormat }),
+        prompt,
+        ...senseNovaReferenceImageFields(referenceImages)
+      };
+      requestText = imageRequestText(editsUrl(config.endpoint), "application/json", requestBody);
+      ({ response, bodyText } = await fetchImageGeneration(editsUrl(config.endpoint), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody)
+      }));
+    } else if (isGeminiImageModel(model)) {
       const requestBody = await geminiRequestBody(prompt, referenceImages, ratio, resolution, configuredImageDownloadProxy(config));
       const requestUrl = geminiGenerateContentUrl(config.endpoint, model);
       requestText = imageRequestText(requestUrl, "application/json", requestBody, { "x-goog-api-key": "[hidden]" });
@@ -1201,6 +1268,8 @@ app.post("/api/generate", async (req, res) => {
     } else {
       const requestBody = grokModel
         ? { model, prompt, ...grokRequestSizeFields(ratio, resolution), ...(grokJsonModel ? grokQualityField(model, quality) : (quality ? { quality } : {})), ...(grokJsonModel ? {} : verifiedImageResponseOptions), ...(grokJsonModel ? (responseFormat === "b64_json" ? { response_format: "b64_json" } : {}) : { response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) }) }
+        : isSenseNovaImageModel(model)
+          ? { ...senseNovaRequestFields(model, size, ratio, responseFormat, { watermark, promptExtend, outputFormat }), prompt }
         : { model, prompt, size, ...(quality ? { quality } : {}), ...verifiedImageResponseOptions, response_format: responseFormat, ...(responseFormat === "url" ? { output_format: "png" } : {}) };
       requestText = imageRequestText(generationUrl(config.endpoint), "application/json", requestBody);
       ({ response, bodyText } = await fetchImageGeneration(generationUrl(config.endpoint), {

@@ -401,6 +401,14 @@ function isGrokImageModel(model) {
   return /(^|\/)(?:grok-imagine-image(?:-2\.0|-quality)?|grok4\.(?:3|5)-img)$/i.test(String(model || "").trim());
 }
 
+function isSenseNovaImageModel(model) {
+  return /(^|\/)sensenova-u1(?:\.5-lite|-fast)$/i.test(String(model || "").trim());
+}
+
+function isSenseNovaU15LiteModel(model) {
+  return /(^|\/)sensenova-u1\.5-lite$/i.test(String(model || "").trim());
+}
+
 function dataUrlByteSize(value) {
   const match = String(value || "").match(/^data:[^,]+;base64,(.*)$/);
   if (!match) return 0;
@@ -465,9 +473,12 @@ function PromptNode({ id, data, selected }) {
   const modelOptions = Array.isArray(data.modelOptions) ? data.modelOptions : [data.model || DEFAULT_IMAGE_MODEL];
   const activeModel = modelOptions.includes(data.model) ? data.model : (modelOptions[0] || "");
   const sizeSelection = normalizeImageSizeSelection({ ...data, model: activeModel || DEFAULT_IMAGE_MODEL });
-  const sizeOptions = getImageSizeOptions(activeModel || DEFAULT_IMAGE_MODEL);
+  const sizeOptions = getImageSizeOptions(activeModel || DEFAULT_IMAGE_MODEL, sizeSelection.resolution);
   const isCustomSize = sizeSelection.resolution === CUSTOM_IMAGE_RESOLUTION;
   const isAutoSize = sizeSelection.resolution === AUTO_IMAGE_RESOLUTION;
+  const isSenseNova = isSenseNovaImageModel(activeModel);
+  const isSenseNovaU15Lite = isSenseNovaU15LiteModel(activeModel);
+  const requestCount = isSenseNovaU15Lite ? 1 : Math.max(1, Math.min(5, Number(data.requestCount) || 1));
   const updateCustomDimension = (dimension, value) => {
     const numeric = Number(value);
     if (!Number.isFinite(numeric) || numeric <= 0) return;
@@ -533,11 +544,32 @@ function PromptNode({ id, data, selected }) {
           </div>
           {!isAutoSize && <div className="node-parameter-field">
             <span className="node-parameter-label">比例</span>
-            {isCustomSize ? <div className="custom-size-inputs"><input className="node-select nodrag" type="number" min="1" max="16384" step="1" value={sizeSelection.width} onChange={(event) => updateCustomDimension("width", event.target.value)} aria-label="自定义宽度" /><span>×</span><input className="node-select nodrag" type="number" min="1" max="16384" step="1" value={sizeSelection.height} onChange={(event) => updateCustomDimension("height", event.target.value)} aria-label="自定义高度" /></div> : <select className="node-select nodrag" value={sizeSelection.ratio} onChange={(event) => data.onSizeChange?.(id, getImageSizeSelection({ model: activeModel || DEFAULT_IMAGE_MODEL, resolution: sizeSelection.resolution, ratio: event.target.value }))} aria-label={cn.nodeSize}>
+            {isCustomSize ? <div className="custom-size-inputs"><input className="node-select nodrag" type="number" min={isSenseNovaU15LiteModel(activeModel) ? "512" : "1"} max={isSenseNovaU15LiteModel(activeModel) ? "4096" : "16384"} step={isSenseNovaU15LiteModel(activeModel) ? "32" : "1"} value={sizeSelection.width} onChange={(event) => updateCustomDimension("width", event.target.value)} aria-label="自定义宽度" /><span>×</span><input className="node-select nodrag" type="number" min={isSenseNovaU15LiteModel(activeModel) ? "512" : "1"} max={isSenseNovaU15LiteModel(activeModel) ? "4096" : "16384"} step={isSenseNovaU15LiteModel(activeModel) ? "32" : "1"} value={sizeSelection.height} onChange={(event) => updateCustomDimension("height", event.target.value)} aria-label="自定义高度" /></div> : <select className="node-select nodrag" value={sizeSelection.ratio} onChange={(event) => data.onSizeChange?.(id, getImageSizeSelection({ model: activeModel || DEFAULT_IMAGE_MODEL, resolution: sizeSelection.resolution, ratio: event.target.value }))} aria-label={cn.nodeSize}>
               {sizeOptions.ratios.map((ratio) => <option key={ratio} value={ratio}>{formatImageRatioOption(getImageSizeSelection({ model: activeModel || DEFAULT_IMAGE_MODEL, resolution: sizeSelection.resolution, ratio }))}</option>)}
             </select>}
           </div>}
-          <div className="node-parameter-field">
+          {isSenseNova ? <>
+            {isSenseNovaU15LiteModel(activeModel) && <div className="node-parameter-field">
+              <span className="node-parameter-label">输出格式</span>
+              <select className="node-select nodrag" value={data.outputFormat || "png"} onChange={(event) => data.onParamChange?.(id, "outputFormat", event.target.value)} aria-label="输出格式">
+                <option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WEBP</option>
+              </select>
+            </div>}
+            <div className="node-parameter-field">
+              <span className="node-parameter-label">水印开关</span>
+              <select className="node-select nodrag" value={data.watermark === false ? "off" : "on"} onChange={(event) => data.onParamChange?.(id, "watermark", event.target.value === "on")} aria-label="水印开关">
+                <option value="on">开</option>
+                <option value="off">关</option>
+              </select>
+            </div>
+            <div className="node-parameter-field">
+              <span className="node-parameter-label">自动润色优化开关</span>
+              <select className="node-select nodrag" value={data.promptExtend === false ? "off" : "on"} onChange={(event) => data.onParamChange?.(id, "promptExtend", event.target.value === "on")} aria-label="自动润色优化开关">
+                <option value="on">开</option>
+                <option value="off">关</option>
+              </select>
+            </div>
+          </> : <div className="node-parameter-field">
             <span className="node-parameter-label">质量</span>
             <select className="node-select nodrag" value={data.quality || "high"} onChange={(event) => data.onParamChange?.(id, "quality", event.target.value)} aria-label={cn.nodeQuality}>
               <option value="high">{cn.high}</option>
@@ -545,11 +577,11 @@ function PromptNode({ id, data, selected }) {
               <option value="low">{cn.low}</option>
               <option value="auto">{cn.auto}</option>
             </select>
-          </div>
+          </div>}
           <div className="node-parameter-field">
             <span className="node-parameter-label">请求数量</span>
-            <select className="node-select nodrag" value={Math.max(1, Math.min(5, Number(data.requestCount) || 1))} onChange={(event) => data.onParamChange?.(id, "requestCount", Number(event.target.value))} aria-label={cn.requestCount}>
-              {[1, 2, 3, 4, 5].map((count) => <option key={count} value={count}>{count} 张</option>)}
+            <select className="node-select nodrag" value={requestCount} onChange={(event) => data.onParamChange?.(id, "requestCount", Number(event.target.value))} aria-label={cn.requestCount}>
+              {(isSenseNovaU15Lite ? [1] : [1, 2, 3, 4, 5]).map((count) => <option key={count} value={count}>{count} 张</option>)}
             </select>
           </div>
         </div>
@@ -652,7 +684,7 @@ function ImageNode({ id, data, selected }) {
         <div><span>{cn.modelInfo}</span><strong>{data.model || cn.infoUnavailable}</strong></div>
             <div><span>{cn.requestCount}</span><strong>{Math.max(1, Math.min(5, Number(data.requestCount) || 1))}</strong></div>
             {isGrokImageModel(data.model) ? <><div><span>aspect_ratio</span><strong>{data.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{data.ratio === "auto" ? cn.requestNotSent : data.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{data.size || cn.infoUnavailable}</strong></div>}
-            <div><span>{cn.qualityInfo}</span><strong>{data.quality || cn.infoUnavailable}</strong></div>
+            {isSenseNovaImageModel(data.model) ? <><div><span>水印开关</span><strong>{data.watermark === false ? "关" : "开"}</strong></div><div><span>自动润色优化开关</span><strong>{data.promptExtend === false ? "关" : "开"}</strong></div>{isSenseNovaU15LiteModel(data.model) && <div><span>输出格式</span><strong>{String(data.outputFormat || "png").toUpperCase()}</strong></div>}</> : <div><span>{cn.qualityInfo}</span><strong>{data.quality || cn.infoUnavailable}</strong></div>}
             <div><span>{cn.requestProfile}</span><strong>{requestProfile}</strong></div>
             <div><span>{cn.requestReferenceCount}</span><strong>{referenceImageCount ? `${referenceImageCount}` : cn.noReferenceImage}</strong></div>
             <div><span>{cn.requestResponseFormat}</span><strong>{data.responseFormat || cn.infoUnavailable}</strong></div>
@@ -730,7 +762,7 @@ function createComparisonEntry(profile, getProfileModelOptions) {
   const profileId = profile?.id || "";
   const modelOptions = getProfileModelOptions?.(profileId) || SUPPORTED_IMAGE_MODELS;
   const model = modelOptions.includes(profile?.model) ? profile.model : (modelOptions[0] || profile?.model || DEFAULT_IMAGE_MODEL);
-  return { id: `comparison-row-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, profileId, model, ...normalizeImageSizeSelection({ ...profile, model }), quality: profile?.quality || "high" };
+  return { id: `comparison-row-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, profileId, model, ...normalizeImageSizeSelection({ ...profile, model }), quality: profile?.quality || "high", watermark: true, promptExtend: true, outputFormat: "png" };
 }
 
 function ComparisonNode({ id, data, selected }) {
@@ -775,16 +807,16 @@ function ComparisonNode({ id, data, selected }) {
       </div>
       <div className="comparison-node-rows"><div className="comparison-node-row-heading"><span className="node-parameter-label">API 对比参数</span><button type="button" className="icon-button subtle nodrag comparison-add-api" onClick={addRow} aria-label={cn.comparisonAddApi} title={cn.comparisonAddApi}><Plus size={16} /></button></div>{rows.map((row) => {
         const profile = profiles.find((item) => item.id === row.profileId);
-        const options = getProfileModelOptions(row.profileId).length ? getProfileModelOptions(row.profileId) : [row.model || DEFAULT_IMAGE_MODEL];
-        const sizeOptions = getImageSizeOptions(row.model || DEFAULT_IMAGE_MODEL);
-        const sizeSelection = normalizeImageSizeSelection(row);
+         const options = getProfileModelOptions(row.profileId).length ? getProfileModelOptions(row.profileId) : [row.model || DEFAULT_IMAGE_MODEL];
+         const sizeSelection = normalizeImageSizeSelection(row);
+         const sizeOptions = getImageSizeOptions(row.model || DEFAULT_IMAGE_MODEL, sizeSelection.resolution);
         const isAutoSize = sizeSelection.resolution === AUTO_IMAGE_RESOLUTION;
         return <div className="comparison-node-row" key={row.id}>
           <div className="node-parameter-field"><span className="node-parameter-label">API</span><select className="node-select nodrag" value={row.profileId} onChange={(event) => changeProfile(row, event.target.value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></div>
           <div className="node-parameter-field node-model-field"><span className="node-parameter-label">{cn.model}</span><select className="node-select node-model nodrag" value={row.model} onChange={(event) => changeModel(row, event.target.value)}>{options.map((model) => <option key={model} value={model}>{model}</option>)}</select></div>
           <div className="node-parameter-field"><span className="node-parameter-label">{cn.size}</span><select className="node-select nodrag" value={sizeSelection.resolution} onChange={(event) => updateRow(row.id, getImageSizeSelection({ ...row, resolution: event.target.value, ratio: sizeSelection.ratio }))}>{sizeOptions.resolutions.map((resolution) => <option key={resolution} value={resolution}>{resolution}</option>)}</select></div>
           {!isAutoSize && <div className="node-parameter-field"><span className="node-parameter-label">比例</span><select className="node-select nodrag" value={sizeSelection.ratio} onChange={(event) => updateRow(row.id, getImageSizeSelection({ ...row, resolution: sizeSelection.resolution, ratio: event.target.value }))}>{sizeOptions.ratios.map((ratio) => <option key={ratio} value={ratio}>{formatImageRatioOption(getImageSizeSelection({ ...row, resolution: sizeSelection.resolution, ratio }))}</option>)}</select></div>}
-          <div className="node-parameter-field"><span className="node-parameter-label">{cn.quality}</span><select className="node-select nodrag" value={row.quality || "high"} onChange={(event) => updateRow(row.id, { quality: event.target.value })}><option value="high">{cn.high}</option><option value="medium">{cn.medium}</option><option value="low">{cn.low}</option><option value="auto">{cn.auto}</option></select></div>
+          {isSenseNovaImageModel(row.model) ? <><div className="node-parameter-field"><span className="node-parameter-label">水印开关</span><select className="node-select nodrag" value={row.watermark === false ? "off" : "on"} onChange={(event) => updateRow(row.id, { watermark: event.target.value === "on" })}><option value="on">开</option><option value="off">关</option></select></div><div className="node-parameter-field"><span className="node-parameter-label">自动润色优化开关</span><select className="node-select nodrag" value={row.promptExtend === false ? "off" : "on"} onChange={(event) => updateRow(row.id, { promptExtend: event.target.value === "on" })}><option value="on">开</option><option value="off">关</option></select></div>{isSenseNovaU15LiteModel(row.model) && <div className="node-parameter-field"><span className="node-parameter-label">输出格式</span><select className="node-select nodrag" value={row.outputFormat || "png"} onChange={(event) => updateRow(row.id, { outputFormat: event.target.value })}><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WEBP</option></select></div>}</> : <div className="node-parameter-field"><span className="node-parameter-label">{cn.quality}</span><select className="node-select nodrag" value={row.quality || "high"} onChange={(event) => updateRow(row.id, { quality: event.target.value })}><option value="high">{cn.high}</option><option value="medium">{cn.medium}</option><option value="low">{cn.low}</option><option value="auto">{cn.auto}</option></select></div>}
           {rows.length > 1 && <button type="button" className="icon-button subtle nodrag comparison-remove-api" onClick={() => removeRow(row.id)} aria-label={cn.removeReferenceImage} title={cn.removeReferenceImage}><X size={14} /></button>}
           {!profile && <p className="comparison-form-error">{cn.comparisonNoProfiles}</p>}
         </div>;
@@ -853,7 +885,7 @@ function Sidebar({ activePanel, setActivePanel, collapsed, setCollapsed, canvase
         </button>
         {!collapsed && <div className="canvas-list">{canvases.map((canvas) => <div key={canvas.id} className={`canvas-list-item ${canvas.id === activeCanvasId ? "is-active" : ""}`}><button className="canvas-select-button" onClick={() => onSelectCanvas(canvas.id)} title={canvas.name}><Layers3 size={14} /><span>{canvas.name}</span></button><button className="canvas-rename-button" onClick={(event) => { event.stopPropagation(); onRenameCanvas(canvas.id); }} aria-label={cn.renameCanvas} title={cn.renameCanvas}><Pencil size={13} /></button>{canvases.length > 1 && <button className="canvas-delete-button" onClick={(event) => { event.stopPropagation(); onDeleteCanvas(canvas.id); }} aria-label={cn.deleteCanvas} title={cn.deleteCanvas}><Trash2 size={13} /></button>}</div>)}</div>}
       </div>
-      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.30</span></div>}
+      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.41</span></div>}
     </aside>
   );
 }
@@ -1310,7 +1342,7 @@ function ComparisonDialog({ config, getProfileModelOptions, initialPrompt, initi
     const profile = profiles.find((item) => item.id === profileId) || profiles[0];
     const modelOptions = getProfileModelOptions(profile?.id || "");
     const model = modelOptions.includes(profile?.model) ? profile.model : (modelOptions[0] || profile?.model || DEFAULT_IMAGE_MODEL);
-    return { id: `comparison-row-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, profileId: profile?.id || "", model, ...normalizeImageSizeSelection({ ...profile, model }), quality: profile?.quality || "high" };
+    return { id: `comparison-row-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, profileId: profile?.id || "", model, ...normalizeImageSizeSelection({ ...profile, model }), quality: profile?.quality || "high", watermark: true, promptExtend: true, outputFormat: "png" };
   };
   const [prompt, setPrompt] = useState(initialPrompt || "");
   const [references, setReferences] = useState(Array.isArray(initialReferences) ? initialReferences : []);
@@ -1381,15 +1413,15 @@ function ComparisonDialog({ config, getProfileModelOptions, initialPrompt, initi
             const profile = profiles.find((item) => item.id === row.profileId);
             const modelOptions = getProfileModelOptions(row.profileId);
             const options = modelOptions.length ? modelOptions : [row.model || DEFAULT_IMAGE_MODEL];
-            const sizeOptions = getImageSizeOptions(row.model || DEFAULT_IMAGE_MODEL);
             const sizeSelection = normalizeImageSizeSelection(row);
+            const sizeOptions = getImageSizeOptions(row.model || DEFAULT_IMAGE_MODEL, sizeSelection.resolution);
             const isAutoSize = sizeSelection.resolution === AUTO_IMAGE_RESOLUTION;
             return <div className="comparison-api-row" key={row.id}>
               <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">API</span><select className="node-select" value={row.profileId} onChange={(event) => changeProfile(row, event.target.value)}>{profiles.map((item) => <option key={item.id} value={item.id}>{item.name || item.id}</option>)}</select></div>
               <div className="node-parameter-field comparison-api-field comparison-model-field"><span className="node-parameter-label">{cn.model}</span><select className="node-select comparison-model-select" value={row.model} onChange={(event) => changeModel(row, event.target.value)}>{options.map((model) => <option key={model} value={model}>{model}</option>)}</select></div>
               <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">{cn.size}</span><select className="node-select" value={sizeSelection.resolution} onChange={(event) => updateRow(row.id, getImageSizeSelection({ ...row, model: row.model, resolution: event.target.value, ratio: sizeSelection.ratio }))}>{sizeOptions.resolutions.map((resolution) => <option key={resolution} value={resolution}>{resolution}</option>)}</select></div>
               {!isAutoSize && <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">比例</span><select className="node-select" value={sizeSelection.ratio} onChange={(event) => updateRow(row.id, getImageSizeSelection({ ...row, model: row.model, resolution: sizeSelection.resolution, ratio: event.target.value }))}>{sizeOptions.ratios.map((ratio) => <option key={ratio} value={ratio}>{formatImageRatioOption(getImageSizeSelection({ ...row, model: row.model, resolution: sizeSelection.resolution, ratio }))}</option>)}</select></div>}
-              <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">{cn.quality}</span><select className="node-select" value={row.quality || "high"} onChange={(event) => updateRow(row.id, { quality: event.target.value })}><option value="high">{cn.high}</option><option value="medium">{cn.medium}</option><option value="low">{cn.low}</option><option value="auto">{cn.auto}</option></select></div>
+              {isSenseNovaImageModel(row.model) ? <><div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">水印开关</span><select className="node-select" value={row.watermark === false ? "off" : "on"} onChange={(event) => updateRow(row.id, { watermark: event.target.value === "on" })}><option value="on">开</option><option value="off">关</option></select></div><div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">自动润色优化开关</span><select className="node-select" value={row.promptExtend === false ? "off" : "on"} onChange={(event) => updateRow(row.id, { promptExtend: event.target.value === "on" })}><option value="on">开</option><option value="off">关</option></select></div>{isSenseNovaU15LiteModel(row.model) && <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">输出格式</span><select className="node-select" value={row.outputFormat || "png"} onChange={(event) => updateRow(row.id, { outputFormat: event.target.value })}><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WEBP</option></select></div>}</> : <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">{cn.quality}</span><select className="node-select" value={row.quality || "high"} onChange={(event) => updateRow(row.id, { quality: event.target.value })}><option value="high">{cn.high}</option><option value="medium">{cn.medium}</option><option value="low">{cn.low}</option><option value="auto">{cn.auto}</option></select></div>}
               {rows.length > 1 && <button type="button" className="icon-button subtle comparison-remove-api" onClick={() => removeRow(row.id)} aria-label={cn.removeReferenceImage} title={cn.removeReferenceImage}><X size={14} /></button>}
               {!profile && <p className="comparison-form-error">{cn.comparisonNoProfiles}</p>}
             </div>;
@@ -1801,7 +1833,10 @@ function AppShell() {
       const sizeSelection = normalizeImageSizeSelection({ model, resolution: source.data.resolution || config.resolution, ratio: source.data.ratio || config.ratio, size: source.data.size || config.size, width: source.data.width || config.width, height: source.data.height || config.height });
       const size = sizeSelection.size;
       const quality = String(source.data.quality || config.quality).trim();
-      const requestCount = Math.max(1, Math.min(5, Number(source.data.requestCount) || 1));
+      const watermark = source.data.watermark !== false;
+      const promptExtend = source.data.promptExtend !== false;
+      const outputFormat = ["png", "jpeg", "webp"].includes(String(source.data.outputFormat || "").toLowerCase()) ? String(source.data.outputFormat).toLowerCase() : "png";
+      const requestCount = isSenseNovaU15LiteModel(model) ? 1 : Math.max(1, Math.min(5, Number(source.data.requestCount) || 1));
       const directReferences = Array.isArray(source.data.referenceImages) ? source.data.referenceImages : (source.data.referenceImage ? [source.data.referenceImage] : []);
       const groupedImages = edges.filter((edge) => edge.target === id).flatMap((edge) => {
         const group = nodes.find((node) => node.id === edge.source && node.type === "imageGroup");
@@ -1823,7 +1858,7 @@ function AppShell() {
       const requestProfile = (config.profiles || []).find((profile) => profile.id === requestProfileId);
       const outputNodes = tasks.map((referenceImages, index) => {
         const imageId = `image-${generationBatchId}-${index}`;
-        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80, y: outputStartY + index * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", comparisonSource: referenceImages[0] || "", prompt, title: prompt, model, quality, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: referenceImages.length, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
+        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80, y: outputStartY + index * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", comparisonSource: referenceImages[0] || "", prompt, title: prompt, model, quality, watermark, promptExtend, outputFormat, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: referenceImages.length, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
       });
       outputNodeIds = outputNodes.map((node) => node.id);
       setNodes((current) => [...current, ...outputNodes]);
@@ -1833,7 +1868,7 @@ function AppShell() {
         const controller = new AbortController();
         const timeout = window.setTimeout(() => controller.abort(), IMAGE_GENERATION_TIMEOUT_MS);
         try {
-          const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, model, size, ratio: sizeSelection.ratio, resolution: sizeSelection.resolution, quality, profileId: source.data.profileId || config.activeProfileId, referenceImages }), signal: controller.signal });
+          const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, model, size, ratio: sizeSelection.ratio, resolution: sizeSelection.resolution, quality, watermark, promptExtend, outputFormat, profileId: source.data.profileId || config.activeProfileId, referenceImages }), signal: controller.signal });
           const responseBodyText = await response.text();
           let result = {};
           try { result = JSON.parse(responseBodyText); } catch { result = { responseText: responseBodyText, rawResponseText: responseBodyText }; }
@@ -1858,7 +1893,7 @@ function AppShell() {
       const successful = results.filter((entry) => entry.result);
       results.forEach((entry, index) => {
         if (!entry.result) return;
-        appendHistory({ id: outputNodeIds[index], src: "", sourceImageUrl: entry.result.sourceImageUrl || "", saveJobId: entry.result.saveJobId || "", prompt, model, quality, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: tasks[index]?.length || 0, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, savedPath: "", fileSize: 0, apiRequestDurationMs: entry.result.apiRequestDurationMs, imageDownloadDurationMs: undefined, localWriteDurationMs: undefined, generationDurationMs: entry.generationDurationMs || 0, saveStatus: entry.result.saveStatus || "pending", status: "success", requestText: entry.result.requestText || entry.requestText || "", responseText: entry.result.responseText || entry.responseText || "", rawResponseText: entry.result.rawResponseText || entry.rawResponseText || "" });
+        appendHistory({ id: outputNodeIds[index], src: "", sourceImageUrl: entry.result.sourceImageUrl || "", saveJobId: entry.result.saveJobId || "", prompt, model, quality, outputFormat, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: tasks[index]?.length || 0, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, savedPath: "", fileSize: 0, apiRequestDurationMs: entry.result.apiRequestDurationMs, imageDownloadDurationMs: undefined, localWriteDurationMs: undefined, generationDurationMs: entry.generationDurationMs || 0, saveStatus: entry.result.saveStatus || "pending", status: "success", requestText: entry.result.requestText || entry.requestText || "", responseText: entry.result.responseText || entry.responseText || "", rawResponseText: entry.result.rawResponseText || entry.rawResponseText || "" });
         if (entry.result.saveJobId) window.setTimeout(() => pollImageSave(entry.result.saveJobId, entry.result.sourceImageUrl || entry.result.imageUrl, outputNodeIds[index], outputNodeIds[index], Date.now() - (entry.generationDurationMs || 0)), 0);
       });
       setNodes((current) => current.map((node) => {
@@ -1911,7 +1946,7 @@ function AppShell() {
       const runTasks = runTaskIndexes.map((taskIndex) => tasks[taskIndex]);
       const outputNodes = retryTaskIndex === null ? tasks.map((task, index) => {
         const imageId = `image-${generationBatchId}-${index}`;
-        return { id: imageId, type: "image", position: { x: outputStartX + index * 392, y: source.position.y }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, comparisonNodeId: id, comparisonTaskIndex: index, src: "", comparisonSource: referenceImages[0] || "", prompt, title: `${task.profile?.name || task.entry.profileId} - ${task.model}`, model: task.model, quality: task.entry.quality || task.profile?.quality || "high", requestCount: 1, ...task.sizeSelection, profileId: task.entry.profileId, profileName: task.profile?.name || task.entry.profileId, referenceImageCount: referenceImages.length, responseFormat: task.profile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
+        return { id: imageId, type: "image", position: { x: outputStartX + index * 392, y: source.position.y }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, comparisonNodeId: id, comparisonTaskIndex: index, src: "", comparisonSource: referenceImages[0] || "", prompt, title: `${task.profile?.name || task.entry.profileId} - ${task.model}`, model: task.model, quality: task.entry.quality || task.profile?.quality || "high", outputFormat: task.entry.outputFormat || "png", requestCount: 1, ...task.sizeSelection, profileId: task.entry.profileId, profileName: task.profile?.name || task.entry.profileId, referenceImageCount: referenceImages.length, responseFormat: task.profile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
       }) : [];
       outputNodeIds = retryTaskIndex === null ? outputNodes.map((node) => node.id) : [existingRetryNode.id];
       if (retryTaskIndex === null) {
@@ -1938,7 +1973,7 @@ function AppShell() {
         const controller = new AbortController();
         const timeout = window.setTimeout(() => controller.abort(), IMAGE_GENERATION_TIMEOUT_MS);
         try {
-          const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, model: task.model, size: task.sizeSelection.size, ratio: task.sizeSelection.ratio, resolution: task.sizeSelection.resolution, quality: task.entry.quality || task.profile?.quality || "high", profileId: task.entry.profileId, referenceImages }), signal: controller.signal });
+          const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ prompt, model: task.model, size: task.sizeSelection.size, ratio: task.sizeSelection.ratio, resolution: task.sizeSelection.resolution, quality: task.entry.quality || task.profile?.quality || "high", outputFormat: task.entry.outputFormat || "png", profileId: task.entry.profileId, referenceImages }), signal: controller.signal });
           const responseBodyText = await response.text();
           let result = {};
           try { result = JSON.parse(responseBodyText); } catch { result = { responseText: responseBodyText, rawResponseText: responseBodyText }; }
@@ -1990,7 +2025,7 @@ function AppShell() {
     const modelOptions = getProfileModelOptions(config.activeProfileId);
     const model = modelOptions.includes(config.model) ? config.model : (modelOptions[0] || "");
     const sizeSelection = normalizeImageSizeSelection({ ...config, model });
-    setNodes((current) => [...current, { id, type: "prompt", position, style: { width: 580, height: 580 }, data: { prompt: "", referenceImages: [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, requestCount: 1, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } }]);
+    setNodes((current) => [...current, { id, type: "prompt", position, style: { width: 580, height: 580 }, data: { prompt: "", referenceImages: [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, requestCount: 1, watermark: true, promptExtend: true, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } }]);
     setActivePanel("canvas");
   }, [config, getProfileModelOptions, setNodes, stableDelete, stableGenerate, stableParamChange, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableSizeChange]);
 
@@ -2017,7 +2052,7 @@ function AppShell() {
     const sizeSelection = normalizeImageSizeSelection({ model, resolution: sourceNode.data.resolution || config.resolution, ratio: sourceNode.data.ratio || config.ratio, size: sourceNode.data.size || config.size, width: sourceNode.data.width || config.width, height: sourceNode.data.height || config.height });
     const sourceHeight = Number(sourceNode.height || sourceNode.measured?.height || sourceNode.style?.height || (isImage ? 390 : 460));
     const promptReferenceImage = isImage ? (sourceNode.data.sourceImageUrl || sourceNode.data.src || "") : "";
-    const promptNode = { id, type: "prompt", position: { x: sourceNode.position.x, y: sourceNode.position.y + sourceHeight + 60 }, style: { width: 580, height: 580 }, data: { sourceNodeId: sourceId, sourceImageId: isImage ? sourceId : "", prompt: "", referenceImages: promptReferenceImage ? [promptReferenceImage] : [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, requestCount: 1, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } };
+    const promptNode = { id, type: "prompt", position: { x: sourceNode.position.x, y: sourceNode.position.y + sourceHeight + 60 }, style: { width: 580, height: 580 }, data: { sourceNodeId: sourceId, sourceImageId: isImage ? sourceId : "", prompt: "", referenceImages: promptReferenceImage ? [promptReferenceImage] : [], profileId: config.activeProfileId || "", profiles: config.profiles, modelOptions, status: "idle", error: "", model, requestCount: 1, watermark: true, promptExtend: true, ...sizeSelection, quality: config.quality, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGenerate: stableGenerate, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onParamChange: stableParamChange, onSizeChange: stableSizeChange } };
     setNodes((current) => [...current, promptNode]);
     setEdges((current) => current.some((edge) => edge.source === sourceId && edge.target === id) ? current : [...current, { id: `edge-${sourceId}-${id}`, source: sourceId, target: id, animated: true, style: { stroke: isImage ? "#7dc7b9" : "#86a9e9", strokeWidth: 1.5 } }]);
   }, [config, getProfileModelOptions, nodes, setEdges, setNodes, stableDelete, stableGenerate, stableParamChange, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableSizeChange]);
@@ -2233,15 +2268,22 @@ function AppShell() {
       return next;
     });
   }, []);
-  const clearBrowserCache = useCallback(() => {
+  const clearBrowserCache = useCallback(async () => {
     if (!window.confirm(cn.confirmClearCache)) return;
+    let workspaceCleared = workspaceStorageMode === "browser";
     try {
       [HISTORY_KEY, CANVASES_KEY, "ai-canvas-workflow-v1"].forEach((key) => localStorage.removeItem(key));
+      const response = await fetch("/api/workspace", { method: "DELETE" });
+      workspaceCleared = response.ok || workspaceCleared;
     } catch {
-      // Reload still resets the in-memory canvas if storage is already unavailable.
+      // Browser mode can still be cleared if the local service is unavailable.
+    }
+    if (!workspaceCleared) {
+      setToast("清除本地工作区失败，请确认本地服务已启动。");
+      return;
     }
     window.location.reload();
-  }, []);
+  }, [workspaceStorageMode]);
   const handleZoomIn = useCallback(() => flowInstance?.zoomIn({ duration: 180 }), [flowInstance]);
   const handleZoomOut = useCallback(() => flowInstance?.zoomOut({ duration: 180 }), [flowInstance]);
   const handleFitView = useCallback(() => flowInstance?.fitView({ padding: 0.2, duration: 250 }), [flowInstance]);
