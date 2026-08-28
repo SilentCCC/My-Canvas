@@ -1,4 +1,4 @@
-import { Component, Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Component, Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AUTO_IMAGE_RESOLUTION, CUSTOM_IMAGE_RESOLUTION, DEFAULT_IMAGE_MODEL, formatImageRatioOption, getImageSizeOptions, getImageSizeSelection, normalizeImageSizeSelection, SUPPORTED_IMAGE_MODELS } from "./config/imageSizes";
 import {
   AlertCircle,
@@ -479,6 +479,10 @@ function PromptNode({ id, data, selected }) {
   const isSenseNova = isSenseNovaImageModel(activeModel);
   const isSenseNovaU15Lite = isSenseNovaU15LiteModel(activeModel);
   const requestCount = isSenseNovaU15Lite ? 1 : Math.max(1, Math.min(5, Number(data.requestCount) || 1));
+  const modelOptionsKey = modelOptions.join("|");
+  const profileOptionsKey = (Array.isArray(data.profiles) ? data.profiles : []).map((profile) => profile?.name || profile?.id || "").join("|");
+  const [parameterMinWidth, setParameterMinWidth] = useState(520);
+  const parameterRef = useRef(null);
   const updateCustomDimension = (dimension, value) => {
     const numeric = Number(value);
     if (!Number.isFinite(numeric) || numeric <= 0) return;
@@ -490,9 +494,22 @@ function PromptNode({ id, data, selected }) {
     if (isGenerating && !data.generationStartedAt) data.onResetGeneration?.(id);
   }, [data.generationStartedAt, data.onResetGeneration, id, isGenerating]);
 
+  useLayoutEffect(() => {
+    const element = parameterRef.current;
+    if (!element) return undefined;
+    const updateMinWidth = () => {
+      const overflowWidth = element.scrollWidth > element.clientWidth + 1 ? element.scrollWidth + 28 : 520;
+      setParameterMinWidth((current) => Math.max(current, overflowWidth, 520));
+    };
+    updateMinWidth();
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(updateMinWidth) : null;
+    observer?.observe(element);
+    return () => observer?.disconnect();
+  }, [activeModel, isAutoSize, isCustomSize, isSenseNova, isSenseNovaU15Lite, modelOptionsKey, profileOptionsKey, sizeSelection.height, sizeSelection.ratio, sizeSelection.resolution, sizeSelection.width]);
+
   return (
     <div className={`canvas-node prompt-node ${selected ? "is-selected" : ""}`}>
-      <NodeResizer nodeId={id} isVisible={selected} minWidth={520} maxWidth={920} minHeight={350} lineClassName="resizer-line" handleClassName="resizer-handle" />
+      <NodeResizer nodeId={id} isVisible={selected} minWidth={parameterMinWidth} maxWidth={Math.max(920, parameterMinWidth)} minHeight={350} lineClassName="resizer-line" handleClassName="resizer-handle" />
       <Handle type="target" position={Position.Left} className="node-handle" />
       <div className="node-header">
         <div className="node-type">
@@ -522,7 +539,7 @@ function PromptNode({ id, data, selected }) {
           <input id={referenceInputId} className="reference-image-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { data.onReferenceFiles?.(id, Array.from(event.target.files || [])); event.target.value = ""; }} />
           <span className="reference-image-hint">{cn.referenceImageLimit}</span>
         </div>
-        <div className="node-parameters">
+        <div className="node-parameters" ref={parameterRef}>
           <div className="node-parameter-field">
             <span className="node-parameter-label">API</span>
             <select className="node-select node-profile nodrag" value={data.profileId || data.activeProfileId || data.profiles?.[0]?.id || ""} onChange={(event) => data.onParamChange?.(id, "profileId", event.target.value)} aria-label={cn.nodeProfile} title={cn.nodeProfile}>
@@ -885,7 +902,7 @@ function Sidebar({ activePanel, setActivePanel, collapsed, setCollapsed, canvase
         </button>
         {!collapsed && <div className="canvas-list">{canvases.map((canvas) => <div key={canvas.id} className={`canvas-list-item ${canvas.id === activeCanvasId ? "is-active" : ""}`}><button className="canvas-select-button" onClick={() => onSelectCanvas(canvas.id)} title={canvas.name}><Layers3 size={14} /><span>{canvas.name}</span></button><button className="canvas-rename-button" onClick={(event) => { event.stopPropagation(); onRenameCanvas(canvas.id); }} aria-label={cn.renameCanvas} title={cn.renameCanvas}><Pencil size={13} /></button>{canvases.length > 1 && <button className="canvas-delete-button" onClick={(event) => { event.stopPropagation(); onDeleteCanvas(canvas.id); }} aria-label={cn.deleteCanvas} title={cn.deleteCanvas}><Trash2 size={13} /></button>}</div>)}</div>}
       </div>
-      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.41</span></div>}
+      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.51</span></div>}
     </aside>
   );
 }
