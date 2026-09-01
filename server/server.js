@@ -1173,7 +1173,7 @@ app.post("/api/generate", async (req, res) => {
   const outputFormat = ["png", "jpeg", "webp"].includes(String(req.body?.outputFormat || "").toLowerCase()) ? String(req.body.outputFormat).toLowerCase() : "png";
   const responseFormat = config.responseFormat === "url" ? "url" : "b64_json";
   const imageEditEndpoint = imageEditUrl(config.endpoint, config.imageEditEndpointMode);
-  const referenceImages = (Array.isArray(req.body?.referenceImages) ? req.body.referenceImages : [req.body?.referenceImage]).map((value) => String(value || "").trim()).filter(Boolean).slice(0, 5);
+  const referenceImages = (Array.isArray(req.body?.referenceImages) ? req.body.referenceImages : [req.body?.referenceImage]).map((value) => String(value || "").trim()).filter(Boolean);
   const grokJsonModel = isGrokImageJsonModel(model);
   let requestText = "";
   try {

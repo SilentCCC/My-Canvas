@@ -221,6 +221,7 @@ const cn = {
   addReferenceImage: "\u4e0a\u4f20\u53c2\u8003\u56fe",
   removeReferenceImage: "\u79fb\u9664\u53c2\u8003\u56fe",
   referenceImageLimit: "最多 5 张参考图",
+  referenceImageUnlimited: "参考图数量不限",
   deleteCanvas: "\u5220\u9664\u753b\u5e03",
   renameCanvas: "\u91cd\u547d\u540d\u753b\u5e03",
   confirmDeleteCanvas: "\u786e\u5b9a\u5220\u9664\u5f53\u524d\u753b\u5e03\u5417\uff1f",
@@ -468,7 +469,9 @@ function PromptNode({ id, data, selected }) {
   const isGenerating = data.status === "generating";
   const referenceInputId = `reference-image-${id}`;
   const [isReferenceDragOver, setIsReferenceDragOver] = useState(false);
-  const referenceImages = Array.isArray(data.referenceImages) ? data.referenceImages : (data.referenceImage ? [data.referenceImage] : []);
+  const directReferenceImages = Array.isArray(data.referenceImages) ? data.referenceImages : (data.referenceImage ? [data.referenceImage] : []);
+  const connectedReferenceImages = Array.isArray(data.connectedReferenceImages) ? data.connectedReferenceImages : [];
+  const referenceImages = [...new Set([...directReferenceImages, ...connectedReferenceImages])].filter(Boolean);
   const isImageToImage = referenceImages.length > 0;
   const modelOptions = Array.isArray(data.modelOptions) ? data.modelOptions : [data.model || DEFAULT_IMAGE_MODEL];
   const activeModel = modelOptions.includes(data.model) ? data.model : (modelOptions[0] || "");
@@ -533,11 +536,11 @@ function PromptNode({ id, data, selected }) {
         />
         <div className={`reference-image-row nodrag ${isReferenceDragOver ? "is-drag-over" : ""}`} onDragOver={(event) => { event.preventDefault(); event.stopPropagation(); setIsReferenceDragOver(true); }} onDragLeave={() => setIsReferenceDragOver(false)} onDrop={(event) => { event.preventDefault(); event.stopPropagation(); setIsReferenceDragOver(false); data.onReferenceFiles?.(id, Array.from(event.dataTransfer.files || [])); }}>
           <div className="reference-image-previews">
-            {referenceImages.map((src, index) => <div className="reference-image-preview" key={`${src.slice(0, 24)}-${index}`}><img src={src} alt={`${cn.referenceImage} ${index + 1}`} draggable="false" /><button className="icon-button subtle nodrag" onClick={() => data.onReferenceChange?.(id, referenceImages.filter((_item, itemIndex) => itemIndex !== index))} aria-label={cn.removeReferenceImage} title={cn.removeReferenceImage}><X size={13} /></button></div>)}
+            {referenceImages.map((src, index) => { const isConnected = connectedReferenceImages.includes(src) && !directReferenceImages.includes(src); return <div className={`reference-image-preview ${isConnected ? "is-connected-reference" : ""}`} key={`${src.slice(0, 24)}-${index}`} title={isConnected ? "来自画布连线" : cn.referenceImage}><img src={displayImageSource(src, data.profileId)} alt={`${cn.referenceImage} ${index + 1}`} draggable="false" />{!isConnected && <button className="icon-button subtle nodrag" onClick={() => data.onReferenceChange?.(id, directReferenceImages.filter((_item, itemIndex) => _item !== src || directReferenceImages.indexOf(_item) !== itemIndex))} aria-label={cn.removeReferenceImage} title={cn.removeReferenceImage}><X size={13} /></button>}</div>; })}
           </div>
-          {referenceImages.length < 5 && <label className="reference-image-button nodrag" htmlFor={referenceInputId} title={cn.addReferenceImage}><ImageUp size={14} /><span>{referenceImages.length ? `${referenceImages.length}/5` : cn.addReferenceImage}</span></label>}
+          <label className="reference-image-button nodrag" htmlFor={referenceInputId} title={cn.addReferenceImage}><ImageUp size={14} /><span>{referenceImages.length ? `${referenceImages.length} 张` : cn.addReferenceImage}</span></label>
           <input id={referenceInputId} className="reference-image-input" type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={(event) => { data.onReferenceFiles?.(id, Array.from(event.target.files || [])); event.target.value = ""; }} />
-          <span className="reference-image-hint">{cn.referenceImageLimit}</span>
+          <span className="reference-image-hint">{cn.referenceImageUnlimited}</span>
         </div>
         <div className="node-parameters" ref={parameterRef}>
           <div className="node-parameter-field">
@@ -902,7 +905,7 @@ function Sidebar({ activePanel, setActivePanel, collapsed, setCollapsed, canvase
         </button>
         {!collapsed && <div className="canvas-list">{canvases.map((canvas) => <div key={canvas.id} className={`canvas-list-item ${canvas.id === activeCanvasId ? "is-active" : ""}`}><button className="canvas-select-button" onClick={() => onSelectCanvas(canvas.id)} title={canvas.name}><Layers3 size={14} /><span>{canvas.name}</span></button><button className="canvas-rename-button" onClick={(event) => { event.stopPropagation(); onRenameCanvas(canvas.id); }} aria-label={cn.renameCanvas} title={cn.renameCanvas}><Pencil size={13} /></button>{canvases.length > 1 && <button className="canvas-delete-button" onClick={(event) => { event.stopPropagation(); onDeleteCanvas(canvas.id); }} aria-label={cn.deleteCanvas} title={cn.deleteCanvas}><Trash2 size={13} /></button>}</div>)}</div>}
       </div>
-      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.51</span></div>}
+      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.54</span></div>}
     </aside>
   );
 }
@@ -935,7 +938,18 @@ function CanvasBoard({ nodes, onNodesChange, edges, setEdges, onEdgesChange, onA
   const groupDragVisualRef = useRef({ images: [], group: null });
   const dragStartPositionsRef = useRef(new Map());
   const [cutterLine, setCutterLine] = useState(null);
-  const onConnect = useCallback((connection) => setEdges((current) => addEdge({ ...connection, animated: true, style: { stroke: "#f4b860", strokeWidth: 1.5 } }, current)), [setEdges]);
+  const onConnect = useCallback((connection) => {
+    if (!connection?.source || !connection?.target || connection.source === connection.target) return;
+    const sourceNode = nodes.find((node) => node.id === connection.source);
+    const targetNode = nodes.find((node) => node.id === connection.target);
+    const validInput = (sourceNode?.type === "image" || sourceNode?.type === "imageGroup") && targetNode?.type === "prompt";
+    const validOutput = (sourceNode?.type === "prompt" || sourceNode?.type === "comparison") && targetNode?.type === "image";
+    if (!validInput && !validOutput) return;
+    setEdges((current) => {
+      if (current.some((edge) => edge.source === connection.source && edge.target === connection.target)) return current;
+      return addEdge({ ...connection, animated: true, style: { stroke: "#f4b860", strokeWidth: 1.5 } }, current);
+    });
+  }, [nodes, setEdges]);
   const handleEdgeClick = useCallback((event, edge) => {
     if (!event.ctrlKey) return;
     event.preventDefault();
@@ -1565,6 +1579,30 @@ function AppShell() {
     workspaceStorageReady.current = true;
   }, [activeCanvas, edges, nodes, workspaceHydrationToken]);
   useEffect(() => {
+    const connectedReferencesByPrompt = new Map();
+    edges.forEach((edge) => {
+      const target = nodes.find((node) => node.id === edge.target && node.type === "prompt");
+      if (!target) return;
+      const source = nodes.find((node) => node.id === edge.source && (node.type === "image" || node.type === "imageGroup"));
+      if (!source) return;
+      const references = source.type === "imageGroup"
+        ? (Array.isArray(source.data?.images) ? source.data.images : [])
+        : [source.data?.sourceImageUrl || source.data?.src || ""];
+      const current = connectedReferencesByPrompt.get(target.id) || [];
+      connectedReferencesByPrompt.set(target.id, [...new Set([...current, ...references])].filter(Boolean));
+    });
+    let changed = false;
+    const nextNodes = nodes.map((node) => {
+      if (node.type !== "prompt") return node;
+      const nextReferences = connectedReferencesByPrompt.get(node.id) || [];
+      const previousReferences = Array.isArray(node.data?.connectedReferenceImages) ? node.data.connectedReferenceImages : [];
+      if (nextReferences.length === previousReferences.length && nextReferences.every((value, index) => value === previousReferences[index])) return node;
+      changed = true;
+      return { ...node, data: { ...node.data, connectedReferenceImages: nextReferences } };
+    });
+    if (changed) setNodes(nextNodes);
+  }, [edges, nodes, setNodes]);
+  useEffect(() => {
     const refreshCanvas = () => {
       if (document.hidden) return;
       window.requestAnimationFrame(() => {
@@ -1667,7 +1705,7 @@ function AppShell() {
   }, [updateNodeData]);
   const updatePrompt = useCallback((id, prompt) => updateNodeData(id, { prompt: prompt.slice(0, 4000), status: "idle", error: "" }), [updateNodeData]);
   const updateReference = useCallback((id, referenceImages) => {
-    const images = (Array.isArray(referenceImages) ? referenceImages : []).filter(Boolean).slice(0, 5);
+    const images = (Array.isArray(referenceImages) ? referenceImages : []).filter(Boolean);
     updateNodeData(id, { referenceImages: images, referenceImage: images[0] || "", status: "idle", error: "" });
   }, [updateNodeData]);
   const referenceFiles = useCallback((id, files) => {
@@ -1676,7 +1714,7 @@ function AppShell() {
     const source = nodes.find((node) => node.id === id);
     const existing = Array.isArray(source?.data?.referenceImages) ? source.data.referenceImages : (source?.data?.referenceImage ? [source.data.referenceImage] : []);
     const readFile = (file) => new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result || "")); reader.onerror = reject; reader.readAsDataURL(file); });
-    Promise.all(imageFiles.slice(0, Math.max(0, 5 - existing.length)).map(readFile)).then((images) => updateReference(id, [...existing, ...images])).catch(() => undefined);
+    Promise.all(imageFiles.map(readFile)).then((images) => updateReference(id, [...existing, ...images])).catch(() => undefined);
   }, [nodes, updateReference]);
   const updateGroupImages = useCallback((id, images) => updateNodeData(id, { images: (Array.isArray(images) ? images : []).filter(Boolean) }), [updateNodeData]);
   const groupFiles = useCallback((id, files) => {
@@ -1855,11 +1893,18 @@ function AppShell() {
       const outputFormat = ["png", "jpeg", "webp"].includes(String(source.data.outputFormat || "").toLowerCase()) ? String(source.data.outputFormat).toLowerCase() : "png";
       const requestCount = isSenseNovaU15LiteModel(model) ? 1 : Math.max(1, Math.min(5, Number(source.data.requestCount) || 1));
       const directReferences = Array.isArray(source.data.referenceImages) ? source.data.referenceImages : (source.data.referenceImage ? [source.data.referenceImage] : []);
+      const linkedImages = edges.filter((edge) => edge.target === id).flatMap((edge) => {
+        const image = nodes.find((node) => node.id === edge.source && node.type === "image");
+        return image ? [image.data?.sourceImageUrl || image.data?.src || ""] : [];
+      }).filter(Boolean);
       const groupedImages = edges.filter((edge) => edge.target === id).flatMap((edge) => {
         const group = nodes.find((node) => node.id === edge.source && node.type === "imageGroup");
         return Array.isArray(group?.data?.images) ? group.data.images : [];
       });
-      const tasks = groupedImages.length ? groupedImages.map((image) => [image]) : Array.from({ length: requestCount }, () => directReferences);
+      const referenceImages = [...new Set([...directReferences, ...linkedImages])].filter(Boolean);
+      const tasks = groupedImages.length
+        ? groupedImages.map((image) => [...new Set([image, ...directReferences, ...linkedImages])].filter(Boolean))
+        : Array.from({ length: requestCount }, () => referenceImages);
       const createdAt = new Date().toISOString();
       const generationBatchId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const sourceWidth = Number(source.width || source.measured?.width || source.style?.width || 580);
