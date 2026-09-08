@@ -120,6 +120,24 @@ function isGeminiImageModel(model) {
   return /(^|\/)(?:gemini-(?:2\.5-flash-image(?:-preview)?|3-pro-image(?:-preview)?|3\.1-flash-image(?:-preview)?))$/i.test(String(model || "").trim());
 }
 
+function isSeedreamImageModel(model) {
+  return /(^|\/)seedream-(?:v5-(?:lite|pro)|5\.0-(?:lite|pro))$/i.test(String(model || "").trim());
+}
+
+function seedreamApiModel(model) {
+  return /lite$/i.test(String(model || "").trim()) ? "seedream-5.0-lite" : "seedream-5.0-pro";
+}
+
+function seedreamResolution(resolution) {
+  const value = String(resolution || "").trim().toUpperCase();
+  return value === "2K" ? "2K" : "1K";
+}
+
+function seedreamAspectRatio(ratio) {
+  const value = String(ratio || "").trim();
+  return new Set(["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9"]).has(value) ? value : "1:1";
+}
+
 function isSenseNovaImageModel(model) {
   return /(^|\/)sensenova-u1(?:\.5-lite|-fast)$/i.test(String(model || "").trim());
 }
@@ -1180,7 +1198,21 @@ app.post("/api/generate", async (req, res) => {
     const apiRequestStartedAt = Date.now();
     let response;
     let bodyText;
-    if (isSenseNovaU1FastModel(model) && referenceImages.length) {
+    if (isSeedreamImageModel(model)) {
+      const requestBody = {
+        model: seedreamApiModel(model),
+        prompt,
+        resolution: seedreamResolution(resolution),
+        aspectRatio: seedreamAspectRatio(ratio),
+        referenceImages
+      };
+      requestText = imageRequestText(generationUrl(config.endpoint), "application/json", requestBody);
+      ({ response, bodyText } = await fetchImageGeneration(generationUrl(config.endpoint), {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody)
+      }));
+    } else if (isSenseNovaU1FastModel(model) && referenceImages.length) {
       throw new Error("SenseNova U1 Fast 不支持参考图，请移除参考图后重试。");
     } else if (isSenseNovaU15LiteModel(model) && referenceImages.length) {
       const requestBody = {

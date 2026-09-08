@@ -281,6 +281,14 @@ const CANVASES_KEY = "ai-canvas-workspaces-v1";
 const FETCHED_MODELS_KEY = "ai-canvas-fetched-models-v1";
 const SELECTED_MODELS_KEY = "ai-canvas-selected-models-v1";
 
+function resolveProfileId(profileId, profiles, fallbackProfileId = "") {
+  const availableProfiles = Array.isArray(profiles) ? profiles : [];
+  const hasProfile = (id) => Boolean(id) && availableProfiles.some((profile) => profile?.id === id);
+  if (hasProfile(profileId)) return profileId;
+  if (hasProfile(fallbackProfileId)) return fallbackProfileId;
+  return availableProfiles.find((profile) => profile?.id)?.id || String(profileId || fallbackProfileId || "");
+}
+
 function loadFetchedModelsByProfile() {
   try {
     const saved = JSON.parse(localStorage.getItem(FETCHED_MODELS_KEY) || "{}");
@@ -410,6 +418,10 @@ function isSenseNovaU15LiteModel(model) {
   return /(^|\/)sensenova-u1\.5-lite$/i.test(String(model || "").trim());
 }
 
+function isSeedreamImageModel(model) {
+  return /(^|\/)seedream-(?:v5-(?:lite|pro)|5\.0-(?:lite|pro))$/i.test(String(model || "").trim());
+}
+
 function dataUrlByteSize(value) {
   const match = String(value || "").match(/^data:[^,]+;base64,(.*)$/);
   if (!match) return 0;
@@ -481,6 +493,7 @@ function PromptNode({ id, data, selected }) {
   const isAutoSize = sizeSelection.resolution === AUTO_IMAGE_RESOLUTION;
   const isSenseNova = isSenseNovaImageModel(activeModel);
   const isSenseNovaU15Lite = isSenseNovaU15LiteModel(activeModel);
+  const isSeedream = isSeedreamImageModel(activeModel);
   const requestCount = isSenseNovaU15Lite ? 1 : Math.max(1, Math.min(5, Number(data.requestCount) || 1));
   const modelOptionsKey = modelOptions.join("|");
   const profileOptionsKey = (Array.isArray(data.profiles) ? data.profiles : []).map((profile) => profile?.name || profile?.id || "").join("|");
@@ -589,7 +602,7 @@ function PromptNode({ id, data, selected }) {
                 <option value="off">关</option>
               </select>
             </div>
-          </> : <div className="node-parameter-field">
+          </> : isSeedream ? null : <div className="node-parameter-field">
             <span className="node-parameter-label">质量</span>
             <select className="node-select nodrag" value={data.quality || "high"} onChange={(event) => data.onParamChange?.(id, "quality", event.target.value)} aria-label={cn.nodeQuality}>
               <option value="high">{cn.high}</option>
@@ -703,8 +716,8 @@ function ImageNode({ id, data, selected }) {
             <div><span>{cn.imagePrompt}</span><strong>{requestPrompt}</strong></div>
         <div><span>{cn.modelInfo}</span><strong>{data.model || cn.infoUnavailable}</strong></div>
             <div><span>{cn.requestCount}</span><strong>{Math.max(1, Math.min(5, Number(data.requestCount) || 1))}</strong></div>
-            {isGrokImageModel(data.model) ? <><div><span>aspect_ratio</span><strong>{data.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{data.ratio === "auto" ? cn.requestNotSent : data.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{data.size || cn.infoUnavailable}</strong></div>}
-            {isSenseNovaImageModel(data.model) ? <><div><span>水印开关</span><strong>{data.watermark === false ? "关" : "开"}</strong></div><div><span>自动润色优化开关</span><strong>{data.promptExtend === false ? "关" : "开"}</strong></div>{isSenseNovaU15LiteModel(data.model) && <div><span>输出格式</span><strong>{String(data.outputFormat || "png").toUpperCase()}</strong></div>}</> : <div><span>{cn.qualityInfo}</span><strong>{data.quality || cn.infoUnavailable}</strong></div>}
+            {isSeedreamImageModel(data.model) ? <><div><span>resolution</span><strong>{data.resolution || cn.infoUnavailable}</strong></div><div><span>aspectRatio</span><strong>{data.ratio || cn.infoUnavailable}</strong></div></> : isGrokImageModel(data.model) ? <><div><span>aspect_ratio</span><strong>{data.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{data.ratio === "auto" ? cn.requestNotSent : data.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{data.size || cn.infoUnavailable}</strong></div>}
+            {isSenseNovaImageModel(data.model) ? <><div><span>水印开关</span><strong>{data.watermark === false ? "关" : "开"}</strong></div><div><span>自动润色优化开关</span><strong>{data.promptExtend === false ? "关" : "开"}</strong></div>{isSenseNovaU15LiteModel(data.model) && <div><span>输出格式</span><strong>{String(data.outputFormat || "png").toUpperCase()}</strong></div>}</> : isSeedreamImageModel(data.model) ? null : <div><span>{cn.qualityInfo}</span><strong>{data.quality || cn.infoUnavailable}</strong></div>}
             <div><span>{cn.requestProfile}</span><strong>{requestProfile}</strong></div>
             <div><span>{cn.requestReferenceCount}</span><strong>{referenceImageCount ? `${referenceImageCount}` : cn.noReferenceImage}</strong></div>
             <div><span>{cn.requestResponseFormat}</span><strong>{data.responseFormat || cn.infoUnavailable}</strong></div>
@@ -905,7 +918,7 @@ function Sidebar({ activePanel, setActivePanel, collapsed, setCollapsed, canvase
         </button>
         {!collapsed && <div className="canvas-list">{canvases.map((canvas) => <div key={canvas.id} className={`canvas-list-item ${canvas.id === activeCanvasId ? "is-active" : ""}`}><button className="canvas-select-button" onClick={() => onSelectCanvas(canvas.id)} title={canvas.name}><Layers3 size={14} /><span>{canvas.name}</span></button><button className="canvas-rename-button" onClick={(event) => { event.stopPropagation(); onRenameCanvas(canvas.id); }} aria-label={cn.renameCanvas} title={cn.renameCanvas}><Pencil size={13} /></button>{canvases.length > 1 && <button className="canvas-delete-button" onClick={(event) => { event.stopPropagation(); onDeleteCanvas(canvas.id); }} aria-label={cn.deleteCanvas} title={cn.deleteCanvas}><Trash2 size={13} /></button>}</div>)}</div>}
       </div>
-      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.54</span></div>}
+      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.58</span></div>}
     </aside>
   );
 }
@@ -1302,8 +1315,8 @@ function HistoryInfoButtons({ item }) {
         <div><span>{cn.imagePrompt}</span><strong>{requestPrompt}</strong></div>
         <div><span>{cn.modelInfo}</span><strong>{item.model || cn.infoUnavailable}</strong></div>
         <div><span>{cn.requestCount}</span><strong>{Math.max(1, Math.min(5, Number(item.requestCount) || 1))}</strong></div>
-        {isGrokImageModel(item.model) ? <><div><span>aspect_ratio</span><strong>{item.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{item.ratio === "auto" ? cn.requestNotSent : item.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{item.size || cn.infoUnavailable}</strong></div>}
-        <div><span>{cn.qualityInfo}</span><strong>{item.quality || cn.infoUnavailable}</strong></div>
+        {isSeedreamImageModel(item.model) ? <><div><span>resolution</span><strong>{item.resolution || cn.infoUnavailable}</strong></div><div><span>aspectRatio</span><strong>{item.ratio || cn.infoUnavailable}</strong></div></> : isGrokImageModel(item.model) ? <><div><span>aspect_ratio</span><strong>{item.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{item.ratio === "auto" ? cn.requestNotSent : item.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{item.size || cn.infoUnavailable}</strong></div>}
+        {!isSeedreamImageModel(item.model) && <div><span>{cn.qualityInfo}</span><strong>{item.quality || cn.infoUnavailable}</strong></div>}
         <div><span>{cn.requestProfile}</span><strong>{requestProfile}</strong></div>
         <div><span>{cn.requestReferenceCount}</span><strong>{referenceImageCount ? `${referenceImageCount}` : cn.noReferenceImage}</strong></div>
         <div><span>{cn.requestResponseFormat}</span><strong>{item.responseFormat || cn.infoUnavailable}</strong></div>
@@ -1512,12 +1525,20 @@ function AppShell() {
   const activeSelectedModels = selectedModelsByProfile[config.activeProfileId] || [];
   const imageModelOptions = useMemo(() => [...new Set([...SUPPORTED_IMAGE_MODELS, ...activeFetchedModels])], [activeFetchedModels]);
   const getProfileModelOptions = useCallback((profileId) => {
-    const fetchedModels = fetchedModelsByProfile[profileId];
+    const profiles = Array.isArray(config.profiles) ? config.profiles : [];
+    const profileExists = profiles.some((profile) => profile?.id === profileId);
+    const effectiveProfileId = profileExists ? profileId : config.activeProfileId;
+    const fetchedModels = fetchedModelsByProfile[effectiveProfileId];
     if (!Array.isArray(fetchedModels)) return SUPPORTED_IMAGE_MODELS;
-    const selectedModels = selectedModelsByProfile[profileId];
-    return Array.isArray(selectedModels) ? selectedModels.filter((model) => fetchedModels.includes(model)) : fetchedModels;
-  }, [fetchedModelsByProfile, selectedModelsByProfile]);
-  const seededNodes = useMemo(() => (activeCanvas?.nodes || []).map((node) => ({ ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, getProfileModelOptions, modelOptions: getProfileModelOptions(node.data?.profileId || config.activeProfileId), onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onCompose: stableComposeGroup, onGenerate: stableGenerate, onComparisonChange: stableComparisonChange, onComparisonGenerate: stableComparisonGenerate, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onParamChange: stableParamChange, onSizeChange: stableSizeChange } })), [activeCanvas, activeCanvasId, config.activeProfileId, config.profiles, getProfileModelOptions, stableComparisonChange, stableComparisonGenerate, stableComposeGroup, stableDelete, stableDownload, stableFileSize, stableGenerate, stableGroupFiles, stableGroupImagesChange, stableImageLoad, stableOpen, stableOpenUrl, stableParamChange, stablePreview, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableRetryDownload, stableShowPrompt, stableSizeChange]);
+    const selectedModels = selectedModelsByProfile[effectiveProfileId];
+    return Array.isArray(selectedModels) ? selectedModels.filter((model) => fetchedModels.includes(model)) : [];
+  }, [config.activeProfileId, config.profiles, fetchedModelsByProfile, selectedModelsByProfile]);
+  const seededNodes = useMemo(() => (activeCanvas?.nodes || []).map((node) => {
+    const profileId = resolveProfileId(node.data?.profileId, config.profiles, config.activeProfileId);
+    const modelOptions = getProfileModelOptions(profileId);
+    const model = node.type === "prompt" ? (modelOptions.length ? (modelOptions.includes(node.data?.model) ? node.data.model : modelOptions[0]) : "") : node.data?.model;
+    return { ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, ...(node.type === "prompt" ? { profileId, modelOptions, model } : { modelOptions }), getProfileModelOptions, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onCompose: stableComposeGroup, onGenerate: stableGenerate, onComparisonChange: stableComparisonChange, onComparisonGenerate: stableComparisonGenerate, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onParamChange: stableParamChange, onSizeChange: stableSizeChange } };
+  }), [activeCanvas, activeCanvasId, config.activeProfileId, config.profiles, getProfileModelOptions, stableComparisonChange, stableComparisonGenerate, stableComposeGroup, stableDelete, stableDownload, stableFileSize, stableGenerate, stableGroupFiles, stableGroupImagesChange, stableImageLoad, stableOpen, stableOpenUrl, stableParamChange, stablePreview, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableRetryDownload, stableShowPrompt, stableSizeChange]);
   const [nodes, setNodes, onNodesChange] = useNodesState(seededNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(activeCanvas?.edges || []);
   const [apiKeyDraft, setApiKeyDraft] = useState("");
@@ -1616,9 +1637,10 @@ function AppShell() {
     return () => { document.removeEventListener("visibilitychange", refreshCanvas); window.removeEventListener("focus", refreshCanvas); };
   }, [flowInstance]);
   useEffect(() => { if (!config.profiles?.length) return; setNodes((current) => current.map((node) => {
-    const modelOptions = getProfileModelOptions(node.data?.profileId || config.activeProfileId);
+    const profileId = resolveProfileId(node.data?.profileId, config.profiles, config.activeProfileId);
+    const modelOptions = getProfileModelOptions(profileId);
     const model = node.type === "prompt" ? (modelOptions.length ? (modelOptions.includes(node.data?.model) ? node.data.model : modelOptions[0]) : "") : node.data?.model;
-    return { ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, ...(node.type === "prompt" ? { modelOptions, model } : {}) } };
+    return { ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, ...(node.type === "prompt" ? { profileId, modelOptions, model } : { modelOptions }) } };
   })); }, [config.activeProfileId, config.profiles, getProfileModelOptions, setNodes]);
   useEffect(() => {
     const models = fetchedModelsByProfile[config.activeProfileId];
@@ -1746,7 +1768,7 @@ function AppShell() {
     if (key === "profileId") {
       const modelOptions = getProfileModelOptions(value);
       patch.modelOptions = modelOptions;
-      if (modelOptions.length && !modelOptions.includes(node.data?.model)) patch.model = modelOptions[0];
+      patch.model = modelOptions.length ? (modelOptions.includes(node.data?.model) ? node.data.model : modelOptions[0]) : "";
     }
     return { ...node, data: { ...node.data, ...patch } };
   })), [getProfileModelOptions, setNodes]);
@@ -1920,7 +1942,9 @@ function AppShell() {
       const requestProfile = (config.profiles || []).find((profile) => profile.id === requestProfileId);
       const outputNodes = tasks.map((referenceImages, index) => {
         const imageId = `image-${generationBatchId}-${index}`;
-        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80, y: outputStartY + index * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", comparisonSource: referenceImages[0] || "", prompt, title: prompt, model, quality, watermark, promptExtend, outputFormat, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: referenceImages.length, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
+        const column = Math.floor(index / 5);
+        const row = index % 5;
+        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80 + column * 392, y: outputStartY + row * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", comparisonSource: referenceImages[0] || "", prompt, title: prompt, model, quality, watermark, promptExtend, outputFormat, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: referenceImages.length, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
       });
       outputNodeIds = outputNodes.map((node) => node.id);
       setNodes((current) => [...current, ...outputNodes]);
@@ -1989,12 +2013,15 @@ function AppShell() {
       const createdAt = new Date().toISOString();
       const generationBatchId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const sourceWidth = Number(source.width || source.measured?.width || source.style?.width || 760);
-      const existingOutputRight = nodes.filter((node) => node.type === "image" && node.data?.sourcePromptId === id).reduce((right, node) => {
-        const left = Number(node.position?.x) || source.position.x + sourceWidth + 80;
-        const width = Number(node.width || node.measured?.width || node.style?.width || 360);
-        return Math.max(right, left + width);
-      }, source.position.x + sourceWidth + 80);
-      const outputStartX = existingOutputRight > source.position.x + sourceWidth + 80 ? existingOutputRight + 32 : source.position.x + sourceWidth + 80;
+      const outputStartX = source.position.x + sourceWidth + 80;
+      const existingOutputBottom = nodes
+        .filter((node) => node.type === "image" && node.data?.sourcePromptId === id)
+        .reduce((bottom, node) => {
+          const top = Number(node.position?.y) || source.position.y;
+          const height = Number(node.height || node.measured?.height || node.style?.height || 430);
+          return Math.max(bottom, top + height);
+        }, source.position.y);
+      const outputStartY = existingOutputBottom > source.position.y ? existingOutputBottom + 32 : source.position.y;
       const tasks = entries.map((entry) => {
         const model = String(entry.model || DEFAULT_IMAGE_MODEL).trim();
         const sizeSelection = normalizeImageSizeSelection({ ...entry, model });
@@ -2008,7 +2035,7 @@ function AppShell() {
       const runTasks = runTaskIndexes.map((taskIndex) => tasks[taskIndex]);
       const outputNodes = retryTaskIndex === null ? tasks.map((task, index) => {
         const imageId = `image-${generationBatchId}-${index}`;
-        return { id: imageId, type: "image", position: { x: outputStartX + index * 392, y: source.position.y }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, comparisonNodeId: id, comparisonTaskIndex: index, src: "", comparisonSource: referenceImages[0] || "", prompt, title: `${task.profile?.name || task.entry.profileId} - ${task.model}`, model: task.model, quality: task.entry.quality || task.profile?.quality || "high", outputFormat: task.entry.outputFormat || "png", requestCount: 1, ...task.sizeSelection, profileId: task.entry.profileId, profileName: task.profile?.name || task.entry.profileId, referenceImageCount: referenceImages.length, responseFormat: task.profile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
+        return { id: imageId, type: "image", position: { x: outputStartX + index * 392, y: outputStartY }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, comparisonNodeId: id, comparisonTaskIndex: index, src: "", comparisonSource: referenceImages[0] || "", prompt, title: `${task.profile?.name || task.entry.profileId} - ${task.model}`, model: task.model, quality: task.entry.quality || task.profile?.quality || "high", outputFormat: task.entry.outputFormat || "png", requestCount: 1, ...task.sizeSelection, profileId: task.entry.profileId, profileName: task.profile?.name || task.entry.profileId, referenceImageCount: referenceImages.length, responseFormat: task.profile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
       }) : [];
       outputNodeIds = retryTaskIndex === null ? outputNodes.map((node) => node.id) : [existingRetryNode.id];
       if (retryTaskIndex === null) {
@@ -2140,7 +2167,12 @@ function AppShell() {
     const next = canvasState.canvases.find((canvas) => canvas.id === canvasId);
     if (!next) return;
     setCanvasState((current) => ({ ...current, activeId: canvasId }));
-    setNodes(next.nodes.map((node) => ({ ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, getProfileModelOptions, modelOptions: getProfileModelOptions(node.data?.profileId || config.activeProfileId), onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onCompose: stableComposeGroup, onGenerate: stableGenerate, onComparisonChange: stableComparisonChange, onComparisonGenerate: stableComparisonGenerate, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onParamChange: stableParamChange, onSizeChange: stableSizeChange } })));
+    setNodes(next.nodes.map((node) => {
+      const profileId = resolveProfileId(node.data?.profileId, config.profiles, config.activeProfileId);
+      const modelOptions = getProfileModelOptions(profileId);
+      const model = node.type === "prompt" ? (modelOptions.length ? (modelOptions.includes(node.data?.model) ? node.data.model : modelOptions[0]) : "") : node.data?.model;
+      return { ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, ...(node.type === "prompt" ? { profileId, modelOptions, model } : { modelOptions }), getProfileModelOptions, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onCompose: stableComposeGroup, onGenerate: stableGenerate, onComparisonChange: stableComparisonChange, onComparisonGenerate: stableComparisonGenerate, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onParamChange: stableParamChange, onSizeChange: stableSizeChange } };
+    }));
     setEdges(next.edges || []);
     setActivePanel("canvas");
   }, [activeCanvasId, canvasState.canvases, config.activeProfileId, config.profiles, getProfileModelOptions, setEdges, setNodes, stableComparisonChange, stableComparisonGenerate, stableComposeGroup, stableDelete, stableDownload, stableFileSize, stableGenerate, stableGroupFiles, stableGroupImagesChange, stableImageLoad, stableOpen, stableOpenUrl, stableParamChange, stablePreview, stablePromptChange, stableReferenceChange, stableReferenceFiles, stableResetGeneration, stableRetryDownload, stableShowPrompt, stableSizeChange]);
@@ -2170,7 +2202,12 @@ function AppShell() {
     const nextActive = remaining.find((canvas) => canvas.id === nextActiveId) || remaining[0];
     setCanvasState({ activeId: nextActive.id, canvases: remaining });
     if (canvasId === activeCanvasId) {
-    setNodes(nextActive.nodes.map((node) => ({ ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, getProfileModelOptions, modelOptions: getProfileModelOptions(node.data?.profileId || config.activeProfileId), onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onCompose: stableComposeGroup, onGenerate: stableGenerate, onComparisonChange: stableComparisonChange, onComparisonGenerate: stableComparisonGenerate, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onParamChange: stableParamChange, onSizeChange: stableSizeChange } })));
+      setNodes(nextActive.nodes.map((node) => {
+        const profileId = resolveProfileId(node.data?.profileId, config.profiles, config.activeProfileId);
+        const modelOptions = getProfileModelOptions(profileId);
+        const model = node.type === "prompt" ? (modelOptions.length ? (modelOptions.includes(node.data?.model) ? node.data.model : modelOptions[0]) : "") : node.data?.model;
+        return { ...node, data: { ...node.data, profiles: config.profiles, activeProfileId: config.activeProfileId, ...(node.type === "prompt" ? { profileId, modelOptions, model } : { modelOptions }), getProfileModelOptions, onPromptChange: stablePromptChange, onReferenceChange: stableReferenceChange, onReferenceFiles: stableReferenceFiles, onGroupImagesChange: stableGroupImagesChange, onGroupFiles: stableGroupFiles, onCompose: stableComposeGroup, onGenerate: stableGenerate, onComparisonChange: stableComparisonChange, onComparisonGenerate: stableComparisonGenerate, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onResetGeneration: stableResetGeneration, onDelete: stableDelete, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onShowPrompt: stableShowPrompt, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onParamChange: stableParamChange, onSizeChange: stableSizeChange } };
+      }));
       setEdges(nextActive.edges || []);
     }
     setActivePanel("canvas");

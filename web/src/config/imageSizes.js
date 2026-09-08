@@ -10,6 +10,8 @@ export const SUPPORTED_IMAGE_MODELS = [
   "grok4.5-img",
   "sensenova-u1.5-lite",
   "sensenova-u1-fast",
+  "seedream-v5-lite",
+  "seedream-v5-pro",
   "gemini-3-pro-image-preview",
   "gemini-3.1-flash-image-preview",
   "gemini-3-pro-image",
@@ -95,6 +97,25 @@ export const IMAGE_SIZE_CONFIG = {
     }
   }
 };
+
+const SEEDREAM_IMAGE_SIZE_CONFIG = {
+  resolutions: ["1K", "2K"],
+  ratios: ["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9"],
+  sizes: {
+    "1K": {
+      "1:1": [1024, 1024], "2:3": [1024, 1536], "3:2": [1536, 1024],
+      "3:4": [1152, 1536], "4:3": [1536, 1152], "9:16": [864, 1536], "16:9": [1536, 864]
+    },
+    "2K": {
+      "1:1": [2048, 2048], "2:3": [2048, 3072], "3:2": [3072, 2048],
+      "3:4": [2304, 3072], "4:3": [3072, 2304], "9:16": [1152, 2048], "16:9": [2048, 1152]
+    }
+  }
+};
+IMAGE_SIZE_CONFIG["seedream-v5-lite"] = SEEDREAM_IMAGE_SIZE_CONFIG;
+IMAGE_SIZE_CONFIG["seedream-v5-pro"] = SEEDREAM_IMAGE_SIZE_CONFIG;
+IMAGE_SIZE_CONFIG["seedream-5.0-lite"] = SEEDREAM_IMAGE_SIZE_CONFIG;
+IMAGE_SIZE_CONFIG["seedream-5.0-pro"] = SEEDREAM_IMAGE_SIZE_CONFIG;
 
 IMAGE_SIZE_CONFIG["grok-imagine-image-quality"] = IMAGE_SIZE_CONFIG["grok-imagine-image"];
 IMAGE_SIZE_CONFIG["grok-imagine-image-2.0"] = IMAGE_SIZE_CONFIG["grok-imagine-image"];
