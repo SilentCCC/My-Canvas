@@ -602,7 +602,7 @@ function PromptNode({ id, data, selected }) {
                 <option value="off">关</option>
               </select>
             </div>
-          </> : isSeedream ? null : <div className="node-parameter-field">
+          </> : <div className="node-parameter-field">
             <span className="node-parameter-label">质量</span>
             <select className="node-select nodrag" value={data.quality || "high"} onChange={(event) => data.onParamChange?.(id, "quality", event.target.value)} aria-label={cn.nodeQuality}>
               <option value="high">{cn.high}</option>
@@ -716,8 +716,8 @@ function ImageNode({ id, data, selected }) {
             <div><span>{cn.imagePrompt}</span><strong>{requestPrompt}</strong></div>
         <div><span>{cn.modelInfo}</span><strong>{data.model || cn.infoUnavailable}</strong></div>
             <div><span>{cn.requestCount}</span><strong>{Math.max(1, Math.min(5, Number(data.requestCount) || 1))}</strong></div>
-            {isSeedreamImageModel(data.model) ? <><div><span>resolution</span><strong>{data.resolution || cn.infoUnavailable}</strong></div><div><span>aspectRatio</span><strong>{data.ratio || cn.infoUnavailable}</strong></div></> : isGrokImageModel(data.model) ? <><div><span>aspect_ratio</span><strong>{data.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{data.ratio === "auto" ? cn.requestNotSent : data.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{data.size || cn.infoUnavailable}</strong></div>}
-            {isSenseNovaImageModel(data.model) ? <><div><span>水印开关</span><strong>{data.watermark === false ? "关" : "开"}</strong></div><div><span>自动润色优化开关</span><strong>{data.promptExtend === false ? "关" : "开"}</strong></div>{isSenseNovaU15LiteModel(data.model) && <div><span>输出格式</span><strong>{String(data.outputFormat || "png").toUpperCase()}</strong></div>}</> : isSeedreamImageModel(data.model) ? null : <div><span>{cn.qualityInfo}</span><strong>{data.quality || cn.infoUnavailable}</strong></div>}
+            {isGrokImageModel(data.model) ? <><div><span>aspect_ratio</span><strong>{data.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{data.ratio === "auto" ? cn.requestNotSent : data.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{data.size || cn.infoUnavailable}</strong></div>}
+            {isSenseNovaImageModel(data.model) ? <><div><span>水印开关</span><strong>{data.watermark === false ? "关" : "开"}</strong></div><div><span>自动润色优化开关</span><strong>{data.promptExtend === false ? "关" : "开"}</strong></div>{isSenseNovaU15LiteModel(data.model) && <div><span>输出格式</span><strong>{String(data.outputFormat || "png").toUpperCase()}</strong></div>}</> : <div><span>{cn.qualityInfo}</span><strong>{data.quality || cn.infoUnavailable}</strong></div>}
             <div><span>{cn.requestProfile}</span><strong>{requestProfile}</strong></div>
             <div><span>{cn.requestReferenceCount}</span><strong>{referenceImageCount ? `${referenceImageCount}` : cn.noReferenceImage}</strong></div>
             <div><span>{cn.requestResponseFormat}</span><strong>{data.responseFormat || cn.infoUnavailable}</strong></div>
@@ -918,7 +918,7 @@ function Sidebar({ activePanel, setActivePanel, collapsed, setCollapsed, canvase
         </button>
         {!collapsed && <div className="canvas-list">{canvases.map((canvas) => <div key={canvas.id} className={`canvas-list-item ${canvas.id === activeCanvasId ? "is-active" : ""}`}><button className="canvas-select-button" onClick={() => onSelectCanvas(canvas.id)} title={canvas.name}><Layers3 size={14} /><span>{canvas.name}</span></button><button className="canvas-rename-button" onClick={(event) => { event.stopPropagation(); onRenameCanvas(canvas.id); }} aria-label={cn.renameCanvas} title={cn.renameCanvas}><Pencil size={13} /></button>{canvases.length > 1 && <button className="canvas-delete-button" onClick={(event) => { event.stopPropagation(); onDeleteCanvas(canvas.id); }} aria-label={cn.deleteCanvas} title={cn.deleteCanvas}><Trash2 size={13} /></button>}</div>)}</div>}
       </div>
-      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.58</span></div>}
+      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.59</span></div>}
     </aside>
   );
 }
@@ -1315,8 +1315,8 @@ function HistoryInfoButtons({ item }) {
         <div><span>{cn.imagePrompt}</span><strong>{requestPrompt}</strong></div>
         <div><span>{cn.modelInfo}</span><strong>{item.model || cn.infoUnavailable}</strong></div>
         <div><span>{cn.requestCount}</span><strong>{Math.max(1, Math.min(5, Number(item.requestCount) || 1))}</strong></div>
-        {isSeedreamImageModel(item.model) ? <><div><span>resolution</span><strong>{item.resolution || cn.infoUnavailable}</strong></div><div><span>aspectRatio</span><strong>{item.ratio || cn.infoUnavailable}</strong></div></> : isGrokImageModel(item.model) ? <><div><span>aspect_ratio</span><strong>{item.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{item.ratio === "auto" ? cn.requestNotSent : item.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{item.size || cn.infoUnavailable}</strong></div>}
-        {!isSeedreamImageModel(item.model) && <div><span>{cn.qualityInfo}</span><strong>{item.quality || cn.infoUnavailable}</strong></div>}
+        {isGrokImageModel(item.model) ? <><div><span>aspect_ratio</span><strong>{item.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{item.ratio === "auto" ? cn.requestNotSent : item.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{item.size || cn.infoUnavailable}</strong></div>}
+        <div><span>{cn.qualityInfo}</span><strong>{item.quality || cn.infoUnavailable}</strong></div>
         <div><span>{cn.requestProfile}</span><strong>{requestProfile}</strong></div>
         <div><span>{cn.requestReferenceCount}</span><strong>{referenceImageCount ? `${referenceImageCount}` : cn.noReferenceImage}</strong></div>
         <div><span>{cn.requestResponseFormat}</span><strong>{item.responseFormat || cn.infoUnavailable}</strong></div>
@@ -1944,7 +1944,7 @@ function AppShell() {
         const imageId = `image-${generationBatchId}-${index}`;
         const column = Math.floor(index / 5);
         const row = index % 5;
-        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80 + column * 392, y: outputStartY + row * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", comparisonSource: referenceImages[0] || "", prompt, title: prompt, model, quality, watermark, promptExtend, outputFormat, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: referenceImages.length, responseFormat: requestProfile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
+        return { id: imageId, type: "image", position: { x: source.position.x + sourceWidth + 80 + column * 392, y: outputStartY + row * 450 }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, src: "", comparisonSource: referenceImages[0] || "", prompt, title: prompt, model, quality, watermark, promptExtend, outputFormat, requestCount, ...sizeSelection, profileId: requestProfileId, profileName: requestProfile?.name || requestProfileId, referenceImageCount: referenceImages.length, responseFormat: isSeedreamImageModel(model) ? "b64_json" : (requestProfile?.responseFormat || config.responseFormat || "url"), createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
       });
       outputNodeIds = outputNodes.map((node) => node.id);
       setNodes((current) => [...current, ...outputNodes]);
@@ -2035,7 +2035,7 @@ function AppShell() {
       const runTasks = runTaskIndexes.map((taskIndex) => tasks[taskIndex]);
       const outputNodes = retryTaskIndex === null ? tasks.map((task, index) => {
         const imageId = `image-${generationBatchId}-${index}`;
-        return { id: imageId, type: "image", position: { x: outputStartX + index * 392, y: outputStartY }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, comparisonNodeId: id, comparisonTaskIndex: index, src: "", comparisonSource: referenceImages[0] || "", prompt, title: `${task.profile?.name || task.entry.profileId} - ${task.model}`, model: task.model, quality: task.entry.quality || task.profile?.quality || "high", outputFormat: task.entry.outputFormat || "png", requestCount: 1, ...task.sizeSelection, profileId: task.entry.profileId, profileName: task.profile?.name || task.entry.profileId, referenceImageCount: referenceImages.length, responseFormat: task.profile?.responseFormat || config.responseFormat || "url", createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
+        return { id: imageId, type: "image", position: { x: outputStartX + index * 392, y: outputStartY }, style: { width: 360, height: 430 }, data: { id: imageId, sourcePromptId: id, comparisonNodeId: id, comparisonTaskIndex: index, src: "", comparisonSource: referenceImages[0] || "", prompt, title: `${task.profile?.name || task.entry.profileId} - ${task.model}`, model: task.model, quality: task.entry.quality || task.profile?.quality || "high", outputFormat: task.entry.outputFormat || "png", requestCount: 1, ...task.sizeSelection, profileId: task.entry.profileId, profileName: task.profile?.name || task.entry.profileId, referenceImageCount: referenceImages.length, responseFormat: isSeedreamImageModel(task.model) ? "b64_json" : (task.profile?.responseFormat || config.responseFormat || "url"), createdAt, status: "generating", error: "", onDelete: stableDelete, onRegenerate: stableGenerate, onRetryDownload: stableRetryDownload, onDownload: stableDownload, onOpen: stableOpen, onOpenUrl: stableOpenUrl, onPreview: stablePreview, onFileSize: stableFileSize, onImageLoad: stableImageLoad, onShowPrompt: stableShowPrompt } };
       }) : [];
       outputNodeIds = retryTaskIndex === null ? outputNodes.map((node) => node.id) : [existingRetryNode.id];
       if (retryTaskIndex === null) {

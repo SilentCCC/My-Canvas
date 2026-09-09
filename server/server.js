@@ -124,20 +124,6 @@ function isSeedreamImageModel(model) {
   return /(^|\/)seedream-(?:v5-(?:lite|pro)|5\.0-(?:lite|pro))$/i.test(String(model || "").trim());
 }
 
-function seedreamApiModel(model) {
-  return /lite$/i.test(String(model || "").trim()) ? "seedream-5.0-lite" : "seedream-5.0-pro";
-}
-
-function seedreamResolution(resolution) {
-  const value = String(resolution || "").trim().toUpperCase();
-  return value === "2K" ? "2K" : "1K";
-}
-
-function seedreamAspectRatio(ratio) {
-  const value = String(ratio || "").trim();
-  return new Set(["1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9"]).has(value) ? value : "1:1";
-}
-
 function isSenseNovaImageModel(model) {
   return /(^|\/)sensenova-u1(?:\.5-lite|-fast)$/i.test(String(model || "").trim());
 }
@@ -1199,19 +1185,41 @@ app.post("/api/generate", async (req, res) => {
     let response;
     let bodyText;
     if (isSeedreamImageModel(model)) {
-      const requestBody = {
-        model: seedreamApiModel(model),
+      // Seedream follows the OpenAI-compatible workbench contract exactly:
+      // generations use JSON, while edits use multipart/form-data with image[].
+      const seedreamQuality = quality || "high";
+      const seedreamFields = {
+        model,
         prompt,
-        resolution: seedreamResolution(resolution),
-        aspectRatio: seedreamAspectRatio(ratio),
-        referenceImages
+        n: 1,
+        size,
+        quality: seedreamQuality,
+        output_format: "png",
+        response_format: "b64_json"
       };
-      requestText = imageRequestText(generationUrl(config.endpoint), "application/json", requestBody);
-      ({ response, bodyText } = await fetchImageGeneration(generationUrl(config.endpoint), {
-        method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody)
-      }));
+      if (referenceImages.length) {
+        const form = new FormData();
+        for (const [field, value] of Object.entries(seedreamFields)) form.append(field, String(value));
+        for (const [index, referenceImage] of referenceImages.entries()) {
+          form.append("image[]", await imageBlobFromInput(referenceImage), `reference-${index + 1}.png`);
+        }
+        requestText = imageRequestText(editsUrl(config.endpoint), "multipart/form-data", {
+          ...seedreamFields,
+          "image[]": referenceImages.map(referenceImageRequestValue)
+        });
+        ({ response, bodyText } = await fetchImageGeneration(editsUrl(config.endpoint), {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}` },
+          body: form
+        }));
+      } else {
+        requestText = imageRequestText(generationUrl(config.endpoint), "application/json", seedreamFields);
+        ({ response, bodyText } = await fetchImageGeneration(generationUrl(config.endpoint), {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify(seedreamFields)
+        }));
+      }
     } else if (isSenseNovaU1FastModel(model) && referenceImages.length) {
       throw new Error("SenseNova U1 Fast 不支持参考图，请移除参考图后重试。");
     } else if (isSenseNovaU15LiteModel(model) && referenceImages.length) {
