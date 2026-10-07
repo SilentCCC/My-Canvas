@@ -1,3 +1,5 @@
+import { isGrokImageModel, isSeedreamImageModel, isSenseNovaU15LiteModel, isSenseNovaU1FastModel } from "../../../shared/imageModels.js";
+
 export const DEFAULT_IMAGE_MODEL = "gpt-image-2";
 export const CUSTOM_IMAGE_RESOLUTION = "custom";
 export const AUTO_IMAGE_RESOLUTION = "auto";
@@ -12,6 +14,7 @@ export const SUPPORTED_IMAGE_MODELS = [
   "sensenova-u1-fast",
   "seedream-v5-lite",
   "seedream-v5-pro",
+  "gemini-nano-banana-2.1",
   "gemini-3-pro-image-preview",
   "gemini-3.1-flash-image-preview",
   "gemini-3-pro-image",
@@ -150,6 +153,7 @@ IMAGE_SIZE_CONFIG["sensenova-u1-fast"] = {
   }
 };
 for (const model of [
+  "gemini-nano-banana-2.1",
   "gemini-3-pro-image-preview",
   "gemini-3.1-flash-image-preview",
   "gemini-3-pro-image",
@@ -158,27 +162,29 @@ for (const model of [
   "gemini-2.5-flash-image"
 ]) IMAGE_SIZE_CONFIG[model] = IMAGE_SIZE_CONFIG[DEFAULT_IMAGE_MODEL];
 
-function isGrokImageModel(model) {
-  return /(^|\/)(?:grok-imagine-image(?:-2\.0|-quality)?|grok4\.(?:3|5)-img)$/i.test(String(model || "").trim());
-}
-
 function configForModel(model) {
+  // Apply exact size exceptions before family defaults; normalize aliases/case.
+  const name = String(model || "").trim().split("/").pop().toLowerCase();
+  if (isSenseNovaU1FastModel(model)) return IMAGE_SIZE_CONFIG["sensenova-u1-fast"];
+  if (isSenseNovaU15LiteModel(model)) return IMAGE_SIZE_CONFIG["sensenova-u1.5-lite"];
+  if (Object.hasOwn(IMAGE_SIZE_CONFIG, name)) return IMAGE_SIZE_CONFIG[name];
   if (isGrokImageModel(model)) return IMAGE_SIZE_CONFIG["grok-imagine-image"];
-  return IMAGE_SIZE_CONFIG[model] || IMAGE_SIZE_CONFIG[DEFAULT_IMAGE_MODEL];
+  if (isSeedreamImageModel(model)) return SEEDREAM_IMAGE_SIZE_CONFIG;
+  return IMAGE_SIZE_CONFIG[DEFAULT_IMAGE_MODEL];
 }
 
 function normalizeCustomDimension(value, fallback, model) {
   const numeric = Math.round(Number(value));
   if (!Number.isFinite(numeric) || numeric <= 0) return fallback;
-  if (/sensenova-u1\.5-lite/i.test(String(model || ""))) return Math.max(512, Math.min(4096, Math.round(numeric / 32) * 32));
+  if (isSenseNovaU15LiteModel(model)) return Math.max(512, Math.min(4096, Math.round(numeric / 32) * 32));
   return Math.min(16384, numeric);
 }
 
 function customImageSizeSelection(model, width, height) {
-  const fallback = /sensenova-u1\.5-lite/i.test(String(model || "")) ? 512 : 1024;
+  const fallback = isSenseNovaU15LiteModel(model) ? 512 : 1024;
   let normalizedWidth = normalizeCustomDimension(width, fallback, model);
   let normalizedHeight = normalizeCustomDimension(height, fallback, model);
-  if (/sensenova-u1\.5-lite/i.test(String(model || ""))) {
+  if (isSenseNovaU15LiteModel(model)) {
     if (normalizedWidth > normalizedHeight * 3) normalizedWidth = Math.max(512, Math.floor(normalizedHeight * 3 / 32) * 32);
     if (normalizedHeight > normalizedWidth * 3) normalizedHeight = Math.max(512, Math.floor(normalizedWidth * 3 / 32) * 32);
   }

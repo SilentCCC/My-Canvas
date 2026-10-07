@@ -1,3 +1,4 @@
+import { isGrokImageModel, isSenseNovaImageModel, isSenseNovaU15LiteModel, isSeedreamImageModel } from "../../shared/imageModels.js";
 import { Component, Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { AUTO_IMAGE_RESOLUTION, CUSTOM_IMAGE_RESOLUTION, DEFAULT_IMAGE_MODEL, formatImageRatioOption, getImageSizeOptions, getImageSizeSelection, normalizeImageSizeSelection, SUPPORTED_IMAGE_MODELS } from "./config/imageSizes";
 import {
@@ -406,22 +407,6 @@ function generatedImageFilename(model) {
   return `${timestamp}-${modelPart}.png`;
 }
 
-function isGrokImageModel(model) {
-  return /(^|\/)(?:grok-imagine-image(?:-2\.0|-quality)?|grok4\.(?:3|5)-img)$/i.test(String(model || "").trim());
-}
-
-function isSenseNovaImageModel(model) {
-  return /(^|\/)sensenova-u1(?:\.5-lite|-fast)$/i.test(String(model || "").trim());
-}
-
-function isSenseNovaU15LiteModel(model) {
-  return /(^|\/)sensenova-u1\.5-lite$/i.test(String(model || "").trim());
-}
-
-function isSeedreamImageModel(model) {
-  return /(^|\/)seedream-(?:v5-(?:lite|pro)|5\.0-(?:lite|pro))$/i.test(String(model || "").trim());
-}
-
 function dataUrlByteSize(value) {
   const match = String(value || "").match(/^data:[^,]+;base64,(.*)$/);
   if (!match) return 0;
@@ -595,13 +580,13 @@ function PromptNode({ id, data, selected }) {
                 <option value="off">关</option>
               </select>
             </div>
-            <div className="node-parameter-field">
+            {isSenseNovaU15Lite && <div className="node-parameter-field">
               <span className="node-parameter-label">自动润色优化开关</span>
               <select className="node-select nodrag" value={data.promptExtend === false ? "off" : "on"} onChange={(event) => data.onParamChange?.(id, "promptExtend", event.target.value === "on")} aria-label="自动润色优化开关">
                 <option value="on">开</option>
                 <option value="off">关</option>
               </select>
-            </div>
+            </div>}
           </> : <div className="node-parameter-field">
             <span className="node-parameter-label">质量</span>
             <select className="node-select nodrag" value={data.quality || "high"} onChange={(event) => data.onParamChange?.(id, "quality", event.target.value)} aria-label={cn.nodeQuality}>
@@ -717,7 +702,7 @@ function ImageNode({ id, data, selected }) {
         <div><span>{cn.modelInfo}</span><strong>{data.model || cn.infoUnavailable}</strong></div>
             <div><span>{cn.requestCount}</span><strong>{Math.max(1, Math.min(5, Number(data.requestCount) || 1))}</strong></div>
             {isGrokImageModel(data.model) ? <><div><span>aspect_ratio</span><strong>{data.ratio || cn.infoUnavailable}</strong></div><div><span>resolution</span><strong>{data.ratio === "auto" ? cn.requestNotSent : data.resolution || cn.infoUnavailable}</strong></div></> : <div><span>{cn.size}</span><strong>{data.size || cn.infoUnavailable}</strong></div>}
-            {isSenseNovaImageModel(data.model) ? <><div><span>水印开关</span><strong>{data.watermark === false ? "关" : "开"}</strong></div><div><span>自动润色优化开关</span><strong>{data.promptExtend === false ? "关" : "开"}</strong></div>{isSenseNovaU15LiteModel(data.model) && <div><span>输出格式</span><strong>{String(data.outputFormat || "png").toUpperCase()}</strong></div>}</> : <div><span>{cn.qualityInfo}</span><strong>{data.quality || cn.infoUnavailable}</strong></div>}
+            {isSenseNovaImageModel(data.model) ? <><div><span>水印开关</span><strong>{data.watermark === false ? "关" : "开"}</strong></div>{isSenseNovaU15LiteModel(data.model) && <div><span>自动润色优化开关</span><strong>{data.promptExtend === false ? "关" : "开"}</strong></div>}{isSenseNovaU15LiteModel(data.model) && <div><span>输出格式</span><strong>{String(data.outputFormat || "png").toUpperCase()}</strong></div>}</> : <div><span>{cn.qualityInfo}</span><strong>{data.quality || cn.infoUnavailable}</strong></div>}
             <div><span>{cn.requestProfile}</span><strong>{requestProfile}</strong></div>
             <div><span>{cn.requestReferenceCount}</span><strong>{referenceImageCount ? `${referenceImageCount}` : cn.noReferenceImage}</strong></div>
             <div><span>{cn.requestResponseFormat}</span><strong>{data.responseFormat || cn.infoUnavailable}</strong></div>
@@ -849,7 +834,7 @@ function ComparisonNode({ id, data, selected }) {
           <div className="node-parameter-field node-model-field"><span className="node-parameter-label">{cn.model}</span><select className="node-select node-model nodrag" value={row.model} onChange={(event) => changeModel(row, event.target.value)}>{options.map((model) => <option key={model} value={model}>{model}</option>)}</select></div>
           <div className="node-parameter-field"><span className="node-parameter-label">{cn.size}</span><select className="node-select nodrag" value={sizeSelection.resolution} onChange={(event) => updateRow(row.id, getImageSizeSelection({ ...row, resolution: event.target.value, ratio: sizeSelection.ratio }))}>{sizeOptions.resolutions.map((resolution) => <option key={resolution} value={resolution}>{resolution}</option>)}</select></div>
           {!isAutoSize && <div className="node-parameter-field"><span className="node-parameter-label">比例</span><select className="node-select nodrag" value={sizeSelection.ratio} onChange={(event) => updateRow(row.id, getImageSizeSelection({ ...row, resolution: sizeSelection.resolution, ratio: event.target.value }))}>{sizeOptions.ratios.map((ratio) => <option key={ratio} value={ratio}>{formatImageRatioOption(getImageSizeSelection({ ...row, resolution: sizeSelection.resolution, ratio }))}</option>)}</select></div>}
-          {isSenseNovaImageModel(row.model) ? <><div className="node-parameter-field"><span className="node-parameter-label">水印开关</span><select className="node-select nodrag" value={row.watermark === false ? "off" : "on"} onChange={(event) => updateRow(row.id, { watermark: event.target.value === "on" })}><option value="on">开</option><option value="off">关</option></select></div><div className="node-parameter-field"><span className="node-parameter-label">自动润色优化开关</span><select className="node-select nodrag" value={row.promptExtend === false ? "off" : "on"} onChange={(event) => updateRow(row.id, { promptExtend: event.target.value === "on" })}><option value="on">开</option><option value="off">关</option></select></div>{isSenseNovaU15LiteModel(row.model) && <div className="node-parameter-field"><span className="node-parameter-label">输出格式</span><select className="node-select nodrag" value={row.outputFormat || "png"} onChange={(event) => updateRow(row.id, { outputFormat: event.target.value })}><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WEBP</option></select></div>}</> : <div className="node-parameter-field"><span className="node-parameter-label">{cn.quality}</span><select className="node-select nodrag" value={row.quality || "high"} onChange={(event) => updateRow(row.id, { quality: event.target.value })}><option value="high">{cn.high}</option><option value="medium">{cn.medium}</option><option value="low">{cn.low}</option><option value="auto">{cn.auto}</option></select></div>}
+          {isSenseNovaImageModel(row.model) ? <><div className="node-parameter-field"><span className="node-parameter-label">水印开关</span><select className="node-select nodrag" value={row.watermark === false ? "off" : "on"} onChange={(event) => updateRow(row.id, { watermark: event.target.value === "on" })}><option value="on">开</option><option value="off">关</option></select></div>{isSenseNovaU15LiteModel(row.model) && <div className="node-parameter-field"><span className="node-parameter-label">自动润色优化开关</span><select className="node-select nodrag" value={row.promptExtend === false ? "off" : "on"} onChange={(event) => updateRow(row.id, { promptExtend: event.target.value === "on" })}><option value="on">开</option><option value="off">关</option></select></div>}{isSenseNovaU15LiteModel(row.model) && <div className="node-parameter-field"><span className="node-parameter-label">输出格式</span><select className="node-select nodrag" value={row.outputFormat || "png"} onChange={(event) => updateRow(row.id, { outputFormat: event.target.value })}><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WEBP</option></select></div>}</> : <div className="node-parameter-field"><span className="node-parameter-label">{cn.quality}</span><select className="node-select nodrag" value={row.quality || "high"} onChange={(event) => updateRow(row.id, { quality: event.target.value })}><option value="high">{cn.high}</option><option value="medium">{cn.medium}</option><option value="low">{cn.low}</option><option value="auto">{cn.auto}</option></select></div>}
           {rows.length > 1 && <button type="button" className="icon-button subtle nodrag comparison-remove-api" onClick={() => removeRow(row.id)} aria-label={cn.removeReferenceImage} title={cn.removeReferenceImage}><X size={14} /></button>}
           {!profile && <p className="comparison-form-error">{cn.comparisonNoProfiles}</p>}
         </div>;
@@ -918,7 +903,7 @@ function Sidebar({ activePanel, setActivePanel, collapsed, setCollapsed, canvase
         </button>
         {!collapsed && <div className="canvas-list">{canvases.map((canvas) => <div key={canvas.id} className={`canvas-list-item ${canvas.id === activeCanvasId ? "is-active" : ""}`}><button className="canvas-select-button" onClick={() => onSelectCanvas(canvas.id)} title={canvas.name}><Layers3 size={14} /><span>{canvas.name}</span></button><button className="canvas-rename-button" onClick={(event) => { event.stopPropagation(); onRenameCanvas(canvas.id); }} aria-label={cn.renameCanvas} title={cn.renameCanvas}><Pencil size={13} /></button>{canvases.length > 1 && <button className="canvas-delete-button" onClick={(event) => { event.stopPropagation(); onDeleteCanvas(canvas.id); }} aria-label={cn.deleteCanvas} title={cn.deleteCanvas}><Trash2 size={13} /></button>}</div>)}</div>}
       </div>
-      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.59</span></div>}
+      {!collapsed && <div className="sidebar-footer"><div className="local-status"><span className="status-dot" /> {cn.localReady}</div><span className="version">V1.1.61</span></div>}
     </aside>
   );
 }
@@ -1465,7 +1450,7 @@ function ComparisonDialog({ config, getProfileModelOptions, initialPrompt, initi
               <div className="node-parameter-field comparison-api-field comparison-model-field"><span className="node-parameter-label">{cn.model}</span><select className="node-select comparison-model-select" value={row.model} onChange={(event) => changeModel(row, event.target.value)}>{options.map((model) => <option key={model} value={model}>{model}</option>)}</select></div>
               <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">{cn.size}</span><select className="node-select" value={sizeSelection.resolution} onChange={(event) => updateRow(row.id, getImageSizeSelection({ ...row, model: row.model, resolution: event.target.value, ratio: sizeSelection.ratio }))}>{sizeOptions.resolutions.map((resolution) => <option key={resolution} value={resolution}>{resolution}</option>)}</select></div>
               {!isAutoSize && <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">比例</span><select className="node-select" value={sizeSelection.ratio} onChange={(event) => updateRow(row.id, getImageSizeSelection({ ...row, model: row.model, resolution: sizeSelection.resolution, ratio: event.target.value }))}>{sizeOptions.ratios.map((ratio) => <option key={ratio} value={ratio}>{formatImageRatioOption(getImageSizeSelection({ ...row, model: row.model, resolution: sizeSelection.resolution, ratio }))}</option>)}</select></div>}
-              {isSenseNovaImageModel(row.model) ? <><div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">水印开关</span><select className="node-select" value={row.watermark === false ? "off" : "on"} onChange={(event) => updateRow(row.id, { watermark: event.target.value === "on" })}><option value="on">开</option><option value="off">关</option></select></div><div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">自动润色优化开关</span><select className="node-select" value={row.promptExtend === false ? "off" : "on"} onChange={(event) => updateRow(row.id, { promptExtend: event.target.value === "on" })}><option value="on">开</option><option value="off">关</option></select></div>{isSenseNovaU15LiteModel(row.model) && <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">输出格式</span><select className="node-select" value={row.outputFormat || "png"} onChange={(event) => updateRow(row.id, { outputFormat: event.target.value })}><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WEBP</option></select></div>}</> : <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">{cn.quality}</span><select className="node-select" value={row.quality || "high"} onChange={(event) => updateRow(row.id, { quality: event.target.value })}><option value="high">{cn.high}</option><option value="medium">{cn.medium}</option><option value="low">{cn.low}</option><option value="auto">{cn.auto}</option></select></div>}
+              {isSenseNovaImageModel(row.model) ? <><div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">水印开关</span><select className="node-select" value={row.watermark === false ? "off" : "on"} onChange={(event) => updateRow(row.id, { watermark: event.target.value === "on" })}><option value="on">开</option><option value="off">关</option></select></div>{isSenseNovaU15LiteModel(row.model) && <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">自动润色优化开关</span><select className="node-select" value={row.promptExtend === false ? "off" : "on"} onChange={(event) => updateRow(row.id, { promptExtend: event.target.value === "on" })}><option value="on">开</option><option value="off">关</option></select></div>}{isSenseNovaU15LiteModel(row.model) && <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">输出格式</span><select className="node-select" value={row.outputFormat || "png"} onChange={(event) => updateRow(row.id, { outputFormat: event.target.value })}><option value="png">PNG</option><option value="jpeg">JPEG</option><option value="webp">WEBP</option></select></div>}</> : <div className="node-parameter-field comparison-api-field"><span className="node-parameter-label">{cn.quality}</span><select className="node-select" value={row.quality || "high"} onChange={(event) => updateRow(row.id, { quality: event.target.value })}><option value="high">{cn.high}</option><option value="medium">{cn.medium}</option><option value="low">{cn.low}</option><option value="auto">{cn.auto}</option></select></div>}
               {rows.length > 1 && <button type="button" className="icon-button subtle comparison-remove-api" onClick={() => removeRow(row.id)} aria-label={cn.removeReferenceImage} title={cn.removeReferenceImage}><X size={14} /></button>}
               {!profile && <p className="comparison-form-error">{cn.comparisonNoProfiles}</p>}
             </div>;

@@ -1,3 +1,4 @@
+import { isGrokImageModel, isGrokImageJsonModel, isGptImage2Model, isGeminiImageModel, isSeedreamImageModel, isSenseNovaImageModel, isSenseNovaU15LiteModel, isSenseNovaU1FastModel } from "../shared/imageModels.js";
 import express from "express";
 import http from "node:http";
 import fs from "node:fs/promises";
@@ -104,38 +105,6 @@ function modelsUrl(endpoint) {
   return `${normalized}/models`;
 }
 
-function isGrokImageModel(model) {
-  return /(^|\/)(?:grok-imagine-image(?:-2\.0|-quality)?|grok4\.(?:3|5)-img)$/i.test(String(model || "").trim());
-}
-
-function isGrokImageJsonModel(model) {
-  return /(^|\/)grok-imagine-image-2\.0$/i.test(String(model || "").trim());
-}
-
-function isGptImage2Model(model) {
-  return /(^|\/)gpt-image-2$/i.test(String(model || "").trim());
-}
-
-function isGeminiImageModel(model) {
-  return /(^|\/)(?:gemini-(?:2\.5-flash-image(?:-preview)?|3-pro-image(?:-preview)?|3\.1-flash-image(?:-preview)?))$/i.test(String(model || "").trim());
-}
-
-function isSeedreamImageModel(model) {
-  return /(^|\/)seedream-(?:v5-(?:lite|pro)|5\.0-(?:lite|pro))$/i.test(String(model || "").trim());
-}
-
-function isSenseNovaImageModel(model) {
-  return /(^|\/)sensenova-u1(?:\.5-lite|-fast)$/i.test(String(model || "").trim());
-}
-
-function isSenseNovaU15LiteModel(model) {
-  return /(^|\/)sensenova-u1\.5-lite$/i.test(String(model || "").trim());
-}
-
-function isSenseNovaU1FastModel(model) {
-  return /(^|\/)sensenova-u1-fast$/i.test(String(model || "").trim());
-}
-
 function senseNovaSize(model, size, ratio) {
   if (isSenseNovaU1FastModel(model)) {
     const sizes = {
@@ -187,9 +156,7 @@ function geminiAspectRatio(ratio) {
 }
 
 function geminiAuthHeaders(apiKey) {
-  // Google-compatible gateways use x-goog-api-key; Bearer keeps existing
-  // OpenAI-compatible Gemini gateways working during the transition.
-  return { Authorization: `Bearer ${apiKey}`, "x-goog-api-key": apiKey };
+  return { Authorization: `Bearer ${apiKey}` };
 }
 
 async function inlineGeminiImage(value, proxyUrl = "") {
@@ -1187,13 +1154,12 @@ app.post("/api/generate", async (req, res) => {
     if (isSeedreamImageModel(model)) {
       // Seedream follows the OpenAI-compatible workbench contract exactly:
       // generations use JSON, while edits use multipart/form-data with image[].
-      const seedreamQuality = quality || "high";
       const seedreamFields = {
         model,
         prompt,
         n: 1,
         size,
-        quality: seedreamQuality,
+        ...(quality ? { quality } : {}),
         output_format: "png",
         response_format: "b64_json"
       };
@@ -1222,7 +1188,7 @@ app.post("/api/generate", async (req, res) => {
       }
     } else if (isSenseNovaU1FastModel(model) && referenceImages.length) {
       throw new Error("SenseNova U1 Fast 不支持参考图，请移除参考图后重试。");
-    } else if (isSenseNovaU15LiteModel(model) && referenceImages.length) {
+    } else if (isSenseNovaImageModel(model) && referenceImages.length) {
       const requestBody = {
         ...senseNovaRequestFields(model, size, ratio, responseFormat, { editing: true, watermark, promptExtend, outputFormat }),
         prompt,
@@ -1237,7 +1203,7 @@ app.post("/api/generate", async (req, res) => {
     } else if (isGeminiImageModel(model)) {
       const requestBody = await geminiRequestBody(prompt, referenceImages, ratio, resolution, configuredImageDownloadProxy(config));
       const requestUrl = geminiGenerateContentUrl(config.endpoint, model);
-      requestText = imageRequestText(requestUrl, "application/json", requestBody, { "x-goog-api-key": "[hidden]" });
+      requestText = imageRequestText(requestUrl, "application/json", requestBody);
       const requestBodyText = JSON.stringify(requestBody);
       const proxyUrl = configuredImageDownloadProxy(config);
       if (proxyUrl) {
@@ -1264,7 +1230,7 @@ app.post("/api/generate", async (req, res) => {
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(requestBody)
       }));
-    } else if ((isGptImage2Model(model) || isGeminiImageModel(model)) && config.referenceImageMode === "url" && referenceImages.length && referenceImages.every(isHttpImageUrl)) {
+    } else if (isGptImage2Model(model) && config.referenceImageMode === "url" && referenceImages.length && referenceImages.every(isHttpImageUrl)) {
       const requestBody = {
         model,
         prompt,
